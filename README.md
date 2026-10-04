@@ -1,139 +1,189 @@
-# QuickShare Studio 🚀
-### Cross-Platform File Sharing, Smart Clipboard & Professional PDF Studio
+<div align="center">
 
-QuickShare Studio is a complete, production-ready desktop and mobile application designed to solve common academic, laboratory, and developer file-management problems: capturing screenshots across devices, organizing lab workflows into clean Xerox-ready multi-page PDFs, and executing high-speed, verifiable local device-to-device transfers.
+# QuickShare Studio
 
----
+**Cross-platform file sharing, universal clipboard and PDF studio for labs, classrooms and developers.**
 
-## 🌟 Key Features
+[![CI](https://github.com/abhijeetmahakur/QuickShareStudio/actions/workflows/ci.yml/badge.svg)](https://github.com/abhijeetmahakur/QuickShareStudio/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/abhijeetmahakur/QuickShareStudio?label=release)](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Flutter](https://img.shields.io/badge/Flutter-3.47-02569B?logo=flutter)](https://flutter.dev)
 
-### 1. Professional PDF Studio & Live Xerox Preview
-- **3-Panel Desktop Layout**: Left page thumbnails bar, center WYSIWYG live preview canvas with exact paper bounds, and right real-time layout & styling controls.
-- **Exact 7 Layout Presets**:
-  - `1 Image / Page` (Full page showcase)
-  - `2 Images / Page` (1x2 portrait or 2x1 landscape)
-  - `3 Images / Page` (3x1 vertical stack)
-  - `4 Images / Page` (2x2 grid for lab reports)
-  - `6 Images / Page` (3x2 compact overview)
-  - `8 Images / Page` (4x2 dense multi-step view)
-  - `10 Images / Page` (5x2 dense code index)
-  - *Custom Grid*: Freeform rows and columns.
-- **Xerox Safe Margins**: Visual printer cutoff guides (5mm / 14pt minimum margin) ensuring no headers or code edges get cut off when printed or photocopied.
-- **Live Styling**: Configurable borders, rounded corners, drop shadows, aspect ratio preservation (Contain vs. Crop-to-Fill), background color, header/footer text, and page numbering (`Page X of Y`).
-- **Invisible Searchable OCR Text Layer**: Generates standard vector PDF files with selectable and searchable text corresponding to image positions.
+[Download](#-download--install) · [Features](#-features) · [Build from source](#-build-from-source) · [Contributing](#-contributing)
 
-### 2. Device-to-Device Sharing & Pairing
-- **Zero-Cloud Local Transfers**: Direct transfers over local Wi-Fi / LAN using chunked streaming.
-- **Expiring 6-Digit Numeric Code**: 5-minute timed pairing codes with brute-force rate-limiting safeguards.
-- **QR Code Pairing**: Instant mobile-to-desktop scanning with JSON payloads (`quickshare://pair?code=...`).
-- **Cryptographic File Integrity**: Pre-transfer and post-transfer SHA-256 checksums with short 8-character fingerprints.
-- **Resilient Transfers**: Chunked progress tracking with Pause, Resume, and Cancel support.
-- **Multi-Device Broadcast**: Send files simultaneously to multiple selected lab peers.
+<img src="docs/screenshots/dashboard.png" alt="QuickShare Studio dashboard" width="900">
 
-### 3. Screenshot Collection & Session Management
-- **Lab Session Folders**: Organize screenshots by session (e.g., `Java Lab Practical 3`, `Python Experiment 5`).
-- **Instant Sample Screenshots**: Built-in realistic code terminal and browser screenshots for immediate testing without external files.
-- **Automatic Deduplication**: Content hashing prevents duplicate screenshots from polluting lab reports.
-- **Drag-and-Drop & Multi-Select**: Reorder images with live preview updates.
-
-### 4. Smart Clipboard Sync
-- **Explicit Consent**: Clipboard contents are inspected and previewed prior to broadcast.
-- **Text & Media**: Supports plain text, code snippets, URLs, and image data.
-
-### 5. PDF Utilities
-- **Merge PDFs**: Combine multiple PDF lab manuals and code outputs into a single document.
-- **Split PDFs**: Extract specific page ranges.
-- **Compress Profiles**: Web (72 DPI), Normal (150 DPI), and Print (300 DPI) optimizations.
-
-### 6. Security & Privacy
-- **Salted SHA-256 PIN Lock**: Protect confidential lab files and transfer history.
-- **Private Transfer Mode**: Anonymize device identifiers during discovery.
-- **One-Click Cache Purge**: Instantly wipe cached transfers, screenshots, and export buffers.
+</div>
 
 ---
 
-## 🛠 Architecture & Tech Stack
+## Overview
 
-- **Framework**: Flutter 3.47.6 (Dart 3.13.5)
-- **State Management**: `Provider` with reactive `TransferEngine`
-- **PDF Generation**: `pdf` (vector rendering) & `printing` (cross-platform print dialogs)
-- **Security & Hashes**: `crypto` (SHA-256), `uuid` (v4 session tracking)
-- **Local Storage**: `shared_preferences`
-- **File System**: `file_picker` with cross-platform abstractions
+QuickShare Studio turns a pile of screenshots into a clean, print-ready PDF in a few clicks, and gives you the tools around it: merging, splitting and compressing PDFs, a universal clipboard, and pairing with your other devices by QR code or 6-digit code.
+
+Everything runs locally on your machine. No account, no cloud upload.
+
+## ✨ Features
+
+| Area | What you get |
+|---|---|
+| **PDF Studio** | Three-panel editor (pages · live preview · layout controls) with 1, 2, 3, 4, 6, 8 and 10 images per page or a custom grid; A3/A4/A5/Letter paper; printer-safe margins; borders, captions, headers/footers and page numbers; optional searchable OCR text layer. |
+| **PDF Tools** | Merge, split by page ranges, and compress (72 / 150 / 300 DPI profiles); file converter with whole-folder support. |
+| **Save, print & share** | Exports save straight to `Downloads/QuickShare`; *Print / Preview* opens the file in your system PDF viewer; *Share* opens the OS share sheet. |
+| **Device pairing** | Expiring 6-digit codes and QR pairing; the code regenerates on demand and old codes are invalidated. |
+| **File sharing** | Send to one or several paired devices with progress, pause/resume and SHA-256 integrity checks. |
+| **Screenshot sessions** | Group screenshots per lab or experiment, with duplicate detection and drag-and-drop reordering. |
+| **Universal clipboard** | Text, links, code and images, previewed before anything is sent. |
+| **Privacy & security** | PIN lock, private mode, configurable download folder and one-click cache purge. |
+
+> **Project status:** PDF Studio, PDF Tools and file export are fully functional. Live device-to-device transfer over the local network is under active development; in the desktop packages, pairing and transfers currently run in a local demonstration mode.
+
+---
+
+## 📥 Download & Install
+
+Pre-built packages are published on the **[Releases page](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest)**.
+
+| Platform | Package | Requirements |
+|---|---|---|
+| 🪟 **Windows 10/11** | `QuickShareStudio-Windows-x64.zip` | [Python 3.10+](https://www.python.org/downloads/), Google Chrome or Microsoft Edge |
+| 🐧 **Linux** (x64) | `QuickShareStudio-Linux.tar.gz` | Python 3, Google Chrome / Chromium / Edge |
+| 🤖 **Android** | `QuickShareStudio-Android.apk` | Permission to install apps from your browser/file manager |
+| 🍎 **iOS / iPadOS** | Build from source (see below) | A Mac with Xcode |
+
+### 🪟 Windows
+
+1. Install **Python 3.10 or newer** from [python.org](https://www.python.org/downloads/). On the first installer screen, tick **"Add python.exe to PATH"**.
+2. Download **`QuickShareStudio-Windows-x64.zip`** from the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest).
+3. Right-click the zip → **Extract All…** and choose a permanent folder, for example `C:\Apps\QuickShareStudio`.
+4. Open the extracted folder and double-click **`launch.vbs`**. QuickShare Studio opens in its own app window.
+
+**Optional: install with Start Menu & Desktop shortcuts.** Clone the repository and run the installer script from PowerShell. It builds the app and registers it under *Settings → Apps → Installed apps* (requires the [Flutter SDK](https://docs.flutter.dev/get-started/install/windows)):
+
+```powershell
+git clone https://github.com/abhijeetmahakur/QuickShareStudio.git
+cd QuickShareStudio
+powershell -ExecutionPolicy Bypass -File .\scripts\install_quickshare.ps1
+```
+
+To uninstall, use *Settings → Apps → Installed apps → QuickShare Studio → Uninstall*.
+
+### 🐧 Linux
+
+```bash
+# 1. Prerequisites (Debian/Ubuntu shown; use your distro's package manager otherwise)
+sudo apt install python3 chromium      # or install Google Chrome
+
+# 2. Download and extract the latest release
+wget https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest/download/QuickShareStudio-Linux.tar.gz
+tar -xzf QuickShareStudio-Linux.tar.gz
+cd QuickShareStudio-Linux
+
+# 3. Launch
+./launch.sh
+```
+
+Exported files are saved to `~/Downloads/QuickShare`. To add a menu entry, create a desktop launcher that runs the full path to `launch.sh`.
+
+### 🤖 Android
+
+1. On your phone, open the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest) and download **`QuickShareStudio-Android.apk`**.
+2. Open the downloaded file. If prompted, allow your browser or file manager to **install unknown apps** (*Settings → Apps → Special app access → Install unknown apps*).
+3. Tap **Install**, then **Open**.
+
+> Because the app is distributed outside the Google Play Store, Google Play Protect may show a warning on first install. Choose **More details → Install anyway**.
+
+### 🍎 iOS / iPadOS
+
+Apple only allows signed apps on iPhone and iPad, so there is no downloadable `.ipa`. You can install QuickShare Studio on your own device from source:
+
+1. On a Mac, install [Xcode](https://apps.apple.com/app/xcode/id497799835) and the [Flutter SDK](https://docs.flutter.dev/get-started/install/macos).
+2. Clone and prepare the project:
+   ```bash
+   git clone https://github.com/abhijeetmahakur/QuickShareStudio.git
+   cd QuickShareStudio
+   flutter pub get
+   open ios/Runner.xcworkspace
+   ```
+3. In Xcode, select the **Runner** target → **Signing & Capabilities**, choose your Apple ID team, and set a unique bundle identifier.
+4. Connect your iPhone/iPad, select it as the run destination, and press **Run** (▶).
+5. On the device, trust the developer certificate under *Settings → General → VPN & Device Management*.
+
+> With a free Apple ID, apps installed this way must be re-installed every 7 days; a paid Apple Developer account removes that limit.
+
+---
+
+## 🛠 Build from source
+
+**Prerequisites:** [Flutter SDK 3.47+](https://docs.flutter.dev/get-started/install) (Dart 3.13+), Git, and Python 3 for the desktop launcher.
+
+```bash
+git clone https://github.com/abhijeetmahakur/QuickShareStudio.git
+cd QuickShareStudio
+flutter pub get
+```
+
+| Target | Command | Output |
+|---|---|---|
+| Desktop web bundle (Windows/Linux packages) | `flutter build web --release --wasm --no-web-resources-cdn` | `build/web/` |
+| Android APK | `flutter build apk --release` | `build/app/outputs/flutter-apk/app-release.apk` |
+| iOS | `flutter build ios --release` | `build/ios/iphoneos/Runner.app` |
+
+Run the desktop bundle locally:
+
+```bash
+python scripts/server.py build/web      # then open the printed http://127.0.0.1:<port>
+```
+
+### Development
+
+```bash
+flutter run -d chrome      # hot reload while you edit lib/
+flutter analyze            # static analysis
+flutter test               # unit & widget tests
+```
+
+On Windows, `QuickShareDev.bat` starts a live-reload development session. See [DEV_WORKFLOW.md](DEV_WORKFLOW.md) for details.
+
+### Publishing a release
+
+Releases are built automatically by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Push a version tag and the Windows, Linux and Android packages are attached to a new GitHub Release:
+
+```bash
+git tag v1.6.0
+git push origin v1.6.0
+```
+
+---
+
+## 🧱 Architecture
+
+| Layer | Technology |
+|---|---|
+| UI | Flutter (Material 3), WebAssembly renderer on desktop |
+| State | `provider` with a central `TransferEngine` |
+| PDF | `pdf` for generation, `printing` for rasterising and previews |
+| Storage | `shared_preferences`; files saved via a local helper server (`scripts/server.py`) on desktop |
+| Integrity | `crypto` (SHA-256), `uuid` |
 
 ```
 lib/
-├── app/
-│   ├── app_shell.dart              # Responsive navigation (Sidebar / Bottom bar)
-│   ├── dashboard_view.dart         # Hub with 10 core modules & quick actions
-│   └── theme.dart                  # Curated Dark & Light modern theme
-├── core/
-│   ├── constants.dart              # Paper sizes (A4, A3, A5, Letter) & tokens
-│   └── utils/
-│       ├── file_utils.dart         # Platform path sanitization
-│       ├── format_utils.dart       # Byte speed & size formatting
-│       ├── hash_utils.dart         # SHA-256 cryptographic utilities
-│       └── sample_screenshot_generator.dart # In-memory realistic lab captures
-├── data/
-│   ├── models/                     # Strongly-typed data models
-│   └── services/
-│       └── transfer_engine.dart    # Singleton transfer, pairing, & discovery engine
-└── features/
-    ├── clipboard/                  # Universal clipboard view
-    ├── file_transfer/              # Send files view with pause/resume
-    ├── nearby_devices/             # Local subnet discovery
-    ├── pairing/                    # QR & 6-digit PIN pairing view
-    ├── pdf_editor/                 # Desktop 3-panel studio & export dialog
-    ├── pdf_layout/                 # Geometry & 7 layout preset engines
-    ├── pdf_tools/                  # Merge, Split, Compress, OCR
-    ├── screenshot_collections/     # Session manager & gallery
-    ├── security/                   # PIN lock & cache purge
-    ├── templates/                  # 5 pre-configured lab templates
-    └── transfer_history/           # Audit trail & resend view
+├── app/            # App shell, navigation, theme
+├── core/           # Constants, services (file actions, theme), utilities, shared widgets
+├── data/           # Models and services (TransferEngine, cross-device transfer, updates)
+└── features/       # dashboard · pdf_editor · pdf_layout · pdf_tools · pairing · file_transfer
+                    # received_items · screenshot_collections · clipboard · transfer_history · security
+scripts/            # Desktop launcher, local file server, installer, dev tooling
 ```
 
----
+## 🤝 Contributing
 
-## 🚀 Getting Started
+1. Fork the repository and create a branch: `git checkout -b feature/my-change`.
+2. Make your change and keep `flutter analyze` and `flutter test` passing.
+3. Open a pull request describing what changed and why.
 
-### Prerequisites
-- Flutter SDK 3.47+ (`flutter --version`)
-- Chrome or Edge browser (for Web build) or Visual Studio C++ (for Windows desktop native)
-
-### Running Locally
-
-```bash
-# Run unit and widget tests
-flutter test
-
-# Run code analysis
-flutter analyze
-
-# Launch on Chrome
-flutter run -d chrome
-
-# Build production web bundle
-flutter build web
-```
-
-### Running the Production Web Bundle
-```bash
-python -m http.server 8080 --directory build/web
-# Open http://localhost:8080 in your browser
-```
-
----
-
-## 🧪 Verification & Test Suite
-
-The test suite in [`test/widget_test.dart`](file:///test/widget_test.dart) tests:
-1. **PDF Layout Presets**: Verifies all 7 presets (1, 2, 3, 4, 6, 8, 10 images) calculate correct row/column bounds and safe margins.
-2. **Cryptographic Integrity**: Validates SHA-256 checksum determinism and 8-character fingerprints.
-3. **Pairing Session**: Validates 6-digit numeric code generation, countdown expiry, and QR code URI format (`quickshare://pair?code=...`).
-4. **App Smoke Test**: Pumps full application shell, checks Dashboard presence, responsive layout, and clean lifecycle disposal.
-
----
+Bug reports and feature requests are welcome in [Issues](https://github.com/abhijeetmahakur/QuickShareStudio/issues).
 
 ## 📄 License
-MIT License. Built for seamless cross-platform computer lab and developer workflows.
 
+Released under the [MIT License](LICENSE). © 2026 Abhijeet Mahakur.

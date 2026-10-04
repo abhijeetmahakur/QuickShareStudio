@@ -11,6 +11,9 @@ class HistoryRecord {
   final DateTime timestamp;
   final String sha256;
   final int durationSeconds;
+  final String? sessionName;
+  final int? pageCount;
+  final String connectionType; // e.g. 'Local Network'
 
   HistoryRecord({
     String? id,
@@ -23,6 +26,9 @@ class HistoryRecord {
     DateTime? timestamp,
     required this.sha256,
     this.durationSeconds = 0,
+    this.sessionName,
+    this.pageCount,
+    this.connectionType = 'Local Network',
   })  : id = id ?? const Uuid().v4(),
         timestamp = timestamp ?? DateTime.now();
 
@@ -37,6 +43,9 @@ class HistoryRecord {
         'timestamp': timestamp.toIso8601String(),
         'sha256': sha256,
         'durationSeconds': durationSeconds,
+        'sessionName': sessionName,
+        'pageCount': pageCount,
+        'connectionType': connectionType,
       };
 
   factory HistoryRecord.fromJson(Map<String, dynamic> json) => HistoryRecord(
@@ -50,5 +59,8 @@ class HistoryRecord {
         timestamp: DateTime.tryParse(json['timestamp'] as String? ?? '') ?? DateTime.now(),
         sha256: json['sha256'] as String? ?? '',
         durationSeconds: json['durationSeconds'] as int? ?? 0,
+        sessionName: json['sessionName'] as String?,
+        pageCount: json['pageCount'] as int?,
+        connectionType: json['connectionType'] as String? ?? 'Local Network',
       );
 }

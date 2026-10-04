@@ -18,18 +18,18 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="QuickShare Studio - High-Performance Cross-Platform File Sharing & Professional Lab PDF Studio with Liquid Glass UI.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="quickshare">
+  <meta name="apple-mobile-web-app-title" content="QuickShare Studio">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>quickshare</title>
+  <title>QuickShare Studio | Liquid Glass File Sharing</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
@@ -41,6 +41,182 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script>
+    window.__quickshareLastBluetoothDevice = null;
+
+    // Dart registers window.__quickshareOnPasteImage(dataUrlOrNull) while PDF Studio is mounted.
+    // Ctrl+V is NOT intercepted in Dart on web, so the browser fires this native paste event,
+    // which carries the clipboard image without needing the clipboard-read permission.
+    window.__quickshareOnPasteImage = null;
+
+    window.addEventListener('paste', function(e) {
+      var target = e.target;
+      // Leave pastes into text fields (Flutter's hidden input/textarea) to the browser.
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      var handler = window.__quickshareOnPasteImage;
+      if (typeof handler !== 'function') return;
+
+      var files = [];
+      if (e.clipboardData && e.clipboardData.items) {
+        for (var i = 0; i < e.clipboardData.items.length; i++) {
+          var item = e.clipboardData.items[i];
+          if (item.kind === 'file' && item.type.indexOf('image') !== -1) {
+            var file = item.getAsFile();
+            if (file) files.push(file);
+          }
+        }
+      }
+      e.preventDefault();
+      if (files.length === 0) {
+        handler(null);
+        return;
+      }
+      files.forEach(function(file) {
+        var reader = new FileReader();
+        reader.onload = function(evt) { handler(evt.target.result); };
+        reader.onerror = function() { handler(null); };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    window.quickshareReadClipboardImageAsync = async function() {
+      if (navigator.clipboard && navigator.clipboard.read) {
+        try {
+          var items = await navigator.clipboard.read();
+          for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            for (var j = 0; j < item.types.length; j++) {
+              var type = item.types[j];
+              if (type.indexOf('image') !== -1) {
+                var blob = await item.getType(type);
+                return await new Promise(function(resolve) {
+                  var reader = new FileReader();
+                  reader.onload = function(evt) {
+                    resolve(evt.target.result);
+                  };
+                  reader.onerror = function() {
+                    resolve(null);
+                  };
+                  reader.readAsDataURL(blob);
+                });
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('navigator.clipboard.read error:', err);
+        }
+      }
+      return null;
+    };
+
+    // Folder picker for the PDF Tools converter: resolves to [{path, bytes}] where path is
+    // webkitRelativePath ("Folder/sub/file.ext"); bytes is null for files above maxBytes.
+    window.quicksharePickFolder = function(maxBytes) {
+      return new Promise(function(resolve) {
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.webkitdirectory = true;
+        input.style.display = 'none';
+        var settled = false;
+        function finish(result) {
+          if (settled) return;
+          settled = true;
+          input.remove();
+          resolve(result);
+        }
+        input.addEventListener('change', async function() {
+          var files = Array.prototype.slice.call(input.files || []);
+          var out = [];
+          for (var i = 0; i < files.length; i++) {
+            var f = files[i];
+            var bytes = null;
+            if (f.size <= maxBytes) {
+              bytes = new Uint8Array(await f.arrayBuffer());
+            }
+            out.push({ path: f.webkitRelativePath || f.name, bytes: bytes });
+          }
+          finish(out);
+        });
+        input.addEventListener('cancel', function() { finish([]); });
+        document.body.appendChild(input);
+        input.click();
+      });
+    };
+
+    window.__quickshareDroppedImages = [];
+
+    // Global drag and drop event listeners
+    window.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    });
+
+    window.addEventListener('drop', function(e) {
+      e.preventDefault();
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        for (var i = 0; i < e.dataTransfer.files.length; i++) {
+          var file = e.dataTransfer.files[i];
+          if (file.type.indexOf('image') !== -1 || file.name.match(/\.(png|jpe?g|webp|bmp|gif|svg)$/i)) {
+            (function(curFile) {
+              var reader = new FileReader();
+              reader.onload = function(evt) {
+                var item = {
+                  name: curFile.name,
+                  data: evt.target.result
+                };
+                window.__quickshareDroppedImages.push(item);
+                window.dispatchEvent(new CustomEvent('quickshare_file_dropped'));
+              };
+              reader.readAsDataURL(curFile);
+            })(file);
+          }
+        }
+      }
+    });
+
+    window.quicksharePopDroppedImages = function() {
+      if (!window.__quickshareDroppedImages || window.__quickshareDroppedImages.length === 0) {
+        return "";
+      }
+      var list = window.__quickshareDroppedImages.slice();
+      window.__quickshareDroppedImages = [];
+      return JSON.stringify(list);
+    };
+
+    // Opens the OS share sheet with a file. Resolves 'shared', 'cancelled' or 'unsupported'.
+    window.quickshareShareFile = async function(bytes, fileName, mimeType) {
+      try {
+        var file = new File([bytes], fileName, { type: mimeType });
+        if (!navigator.canShare || !navigator.canShare({ files: [file] })) {
+          return 'unsupported';
+        }
+        await navigator.share({ files: [file], title: fileName });
+        return 'shared';
+      } catch (err) {
+        return err && err.name === 'AbortError' ? 'cancelled' : 'unsupported';
+      }
+    };
+
+    // Native Web Bluetooth device discovery
+    window.quickshareScanBluetooth = async function() {
+      if (!navigator.bluetooth) {
+        return { success: false, error: 'Web Bluetooth not supported in this browser' };
+      }
+      try {
+        var device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true
+        });
+        return { success: true, name: device.name || 'Bluetooth Device', id: device.id };
+      } catch (err) {
+        return { success: false, error: err.toString() };
+      }
+    };
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

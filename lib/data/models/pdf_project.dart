@@ -100,10 +100,14 @@ class PdfProject {
     PageGeometry defaultGeometry = const PageGeometry(),
     ImageFitMode defaultFitMode = ImageFitMode.contain,
     bool defaultCaptions = false,
+    int customRows = 2,
+    int customCols = 2,
   }) {
     final dims = LayoutPreset.getGridDimensions(
       defaultPreset,
       defaultGeometry.isLandscape,
+      customRows: customRows,
+      customCols: customCols,
     );
     final slotsPerPage = dims.rows * dims.cols;
 
@@ -115,6 +119,8 @@ class PdfProject {
           geometry: defaultGeometry,
           fitMode: defaultFitMode,
           showCaptions: defaultCaptions,
+          customRows: customRows,
+          customCols: customCols,
         )
       ];
       return;
@@ -135,6 +141,8 @@ class PdfProject {
           geometry: defaultGeometry,
           fitMode: defaultFitMode,
           showCaptions: defaultCaptions,
+          customRows: customRows,
+          customCols: customCols,
         ),
       );
       pageNum++;

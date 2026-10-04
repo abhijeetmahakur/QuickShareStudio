@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:uuid/uuid.dart';
 
 enum TransferStatus {
@@ -34,6 +35,10 @@ class TransferItem {
   final DateTime startTime;
   final DateTime? completedTime;
   final String? errorMessage;
+  final String? sessionName;
+  final int? pageCount;
+  final String connectionType;
+  final Uint8List? rawBytes;
 
   TransferItem({
     String? transferId,
@@ -52,6 +57,10 @@ class TransferItem {
     DateTime? startTime,
     this.completedTime,
     this.errorMessage,
+    this.sessionName,
+    this.pageCount,
+    this.connectionType = 'Local Network',
+    this.rawBytes,
   })  : transferId = transferId ?? const Uuid().v4(),
         startTime = startTime ?? DateTime.now();
 
@@ -62,6 +71,10 @@ class TransferItem {
     double? speedBytesPerSec,
     DateTime? completedTime,
     String? errorMessage,
+    String? sessionName,
+    int? pageCount,
+    String? connectionType,
+    Uint8List? rawBytes,
   }) {
     return TransferItem(
       transferId: transferId,
@@ -80,6 +93,10 @@ class TransferItem {
       startTime: startTime,
       completedTime: completedTime ?? this.completedTime,
       errorMessage: errorMessage ?? this.errorMessage,
+      sessionName: sessionName ?? this.sessionName,
+      pageCount: pageCount ?? this.pageCount,
+      connectionType: connectionType ?? this.connectionType,
+      rawBytes: rawBytes ?? this.rawBytes,
     );
   }
 }

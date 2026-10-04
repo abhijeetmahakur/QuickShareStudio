@@ -1,5 +1,8 @@
 import 'dart:math';
 
+/// Represents an active device pairing session.
+/// The pairing code remains active while the sender's application session is open.
+/// It is invalidated automatically on disconnect, end session, or app close.
 class PairingSession {
   final String sessionId;
   final String numericCode; // 6-digit code
@@ -7,7 +10,7 @@ class PairingSession {
   final String hostIp;
   final int hostPort;
   final DateTime createdAt;
-  final DateTime expiresAt;
+  bool isActive;
   final bool isApproved;
   final int failedAttempts;
 
@@ -18,23 +21,22 @@ class PairingSession {
     required this.hostIp,
     required this.hostPort,
     required this.createdAt,
-    required this.expiresAt,
+    this.isActive = true,
     this.isApproved = false,
     this.failedAttempts = 0,
   });
 
-  /// Generates a fresh temporary pairing session expiring in 5 minutes
+  /// Generates a fresh session-bound pairing code
   factory PairingSession.create({
     required String hostDeviceName,
     required String hostIp,
     required int hostPort,
-    int durationMinutes = 5,
   }) {
     final rand = Random();
     // 6-digit cryptographically styled numeric code: 100000 - 999999
     final code = (100000 + rand.nextInt(900000)).toString();
     final now = DateTime.now();
-    final sessionId = 'pair_${now.millisecondsSinceEpoch}_${rand.nextInt(10000)}';
+    final sessionId = 'pair_${now.microsecondsSinceEpoch}_${rand.nextInt(1000000)}';
 
     return PairingSession(
       sessionId: sessionId,
@@ -43,15 +45,21 @@ class PairingSession {
       hostIp: hostIp,
       hostPort: hostPort,
       createdAt: now,
-      expiresAt: now.add(Duration(minutes: durationMinutes)),
+      isActive: true,
     );
   }
 
-  bool get isExpired => DateTime.now().isAfter(expiresAt);
+  void invalidate() {
+    isActive = false;
+  }
+
+  bool get isExpired => !isActive;
 
   bool get isLockedOut => failedAttempts >= 5;
 
-  /// Formatted numeric code: "123 - 456" for readability
+  String get code => numericCode;
+
+  /// Formatted numeric code: "123 - 456" for display
   String get formattedCode {
     if (numericCode.length == 6) {
       return '${numericCode.substring(0, 3)} - ${numericCode.substring(3)}';
@@ -59,7 +67,11 @@ class PairingSession {
     return numericCode;
   }
 
-  /// Compact JSON string suitable for encoding into a QR code
+  /// Secure pairing payload for QR scanner or direct link
   String get qrPayload =>
-      'quickshare://pair?sid=$sessionId&code=$numericCode&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}&exp=${expiresAt.millisecondsSinceEpoch}';
+      'quickshare://pair?code=$numericCode&sid=$sessionId&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}';
+
+  /// App Deep Link for pairing confirmation
+  String get appDeepLink =>
+      'quickshare://pair?sid=$sessionId&code=$numericCode&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}';
 }

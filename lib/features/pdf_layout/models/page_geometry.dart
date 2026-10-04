@@ -71,18 +71,29 @@ class PageGeometry {
   /// Aspect ratio of the physical sheet (width / height)
   double get pageAspectRatio => pageWidth / pageHeight;
 
-  /// Returns the corresponding `pdf` package PageFormat
+  /// Returns the corresponding `pdf` package PageFormat with 0 margins so positioning is exact
   pw_pdf.PdfPageFormat toPdfPageFormat() {
+    pw_pdf.PdfPageFormat baseFormat;
     switch (paperSize) {
       case PaperSize.a4:
-        return isLandscape ? pw_pdf.PdfPageFormat.a4.landscape : pw_pdf.PdfPageFormat.a4;
+        baseFormat = isLandscape ? pw_pdf.PdfPageFormat.a4.landscape : pw_pdf.PdfPageFormat.a4;
+        break;
       case PaperSize.a3:
-        return isLandscape ? pw_pdf.PdfPageFormat.a3.landscape : pw_pdf.PdfPageFormat.a3;
+        baseFormat = isLandscape ? pw_pdf.PdfPageFormat.a3.landscape : pw_pdf.PdfPageFormat.a3;
+        break;
       case PaperSize.a5:
-        return isLandscape ? pw_pdf.PdfPageFormat.a5.landscape : pw_pdf.PdfPageFormat.a5;
+        baseFormat = isLandscape ? pw_pdf.PdfPageFormat.a5.landscape : pw_pdf.PdfPageFormat.a5;
+        break;
       case PaperSize.letter:
-        return isLandscape ? pw_pdf.PdfPageFormat.letter.landscape : pw_pdf.PdfPageFormat.letter;
+        baseFormat = isLandscape ? pw_pdf.PdfPageFormat.letter.landscape : pw_pdf.PdfPageFormat.letter;
+        break;
     }
+    return baseFormat.copyWith(
+      marginLeft: 0,
+      marginTop: 0,
+      marginRight: 0,
+      marginBottom: 0,
+    );
   }
 
   String get paperDisplayName {

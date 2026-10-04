@@ -1,12 +1,19 @@
+import '../../core/constants.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../data/services/transfer_engine.dart';
 import '../../data/models/device_model.dart';
-import '../../core/constants.dart';
+import '../../core/widgets/hover_card.dart';
+
+enum PairingDisplayMode { qrCode, sixDigitCode }
+enum ConnectMode { sixDigitCode, scanQrCode }
 
 class PairingView extends StatefulWidget {
-  const PairingView({super.key});
+  final VoidCallback? onNavigateToReceived;
+
+  const PairingView({super.key, this.onNavigateToReceived});
 
   @override
   State<PairingView> createState() => _PairingViewState();
@@ -14,362 +21,1438 @@ class PairingView extends StatefulWidget {
 
 class _PairingViewState extends State<PairingView> {
   final TextEditingController _codeController = TextEditingController();
+  final TextEditingController _qrPayloadController = TextEditingController();
+  PairingDisplayMode _activeMode = PairingDisplayMode.qrCode;
+  ConnectMode _connectMode = ConnectMode.sixDigitCode;
+
   bool _isConnecting = false;
   String? _statusError;
+  String? _statusSuccess;
+
+  // Design Tokens (Strict adherence to specification)
+  static Color get _bgNearBlack => AppColors.dashboardBg;
+  static Color get _panelCharcoal => AppColors.charcoalSurface;
+  static Color get _cardSurface => AppColors.cardBg;
+  static Color get _limeAccent => AppColors.primaryAccent;
+  static Color get _softLightGray => AppColors.secondaryText;
+  static Color get _primaryText => AppColors.primaryText;
+  static Color get _borderSubtle => AppColors.subtleBorder;
+  static Color get _borderSubtleLight => AppColors.subtleBorderLight;
+  static const Color _errorCoral = Color(0xFFF87171);
+  static Color get _errorBg => AppColors.errorContainer;
 
   @override
   void dispose() {
     _codeController.dispose();
+    _qrPayloadController.dispose();
     super.dispose();
   }
 
   Future<void> _connectWithCode() async {
-    final code = _codeController.text.trim();
-    if (code.length < 6) {
-      setState(() => _statusError = 'Please enter a valid 6-digit connection code');
+    final rawText = _codeController.text.trim();
+    final cleanCode = rawText.replaceAll(RegExp(r'[^0-9]'), '');
+
+    setState(() {
+      _statusError = null;
+      _statusSuccess = null;
+    });
+
+    if (cleanCode.length != 6) {
+      setState(() {
+        _statusError = 'Please enter a valid 6-digit pairing code.';
+      });
       return;
     }
 
-    setState(() {
-      _isConnecting = true;
-      _statusError = null;
-    });
-
     final engine = context.read<TransferEngine>();
-    final success = await engine.pairWithNumericCode(code);
+
+    // Check if user is attempting to enter this device's own code
+    if (engine.currentPairingSession != null &&
+        engine.currentPairingSession!.numericCode == cleanCode) {
+      setState(() {
+        _statusError = 'Cannot pair with this device\'s own code. Enter the code from the other device.';
+      });
+      return;
+    }
+
+    // Check if the code was previously invalidated or regenerated
+    if (engine.isCodeInvalidated(cleanCode)) {
+      setState(() {
+        _statusError = 'This pairing code has been invalidated or expired. Please ask the sender to regenerate a new code.';
+      });
+      return;
+    }
+
+    setState(() => _isConnecting = true);
+
+    final success = await engine.pairWithNumericCode(cleanCode);
+
+    if (!mounted) return;
 
     setState(() => _isConnecting = false);
 
-    if (mounted) {
-      if (success) {
-        _codeController.clear();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Device paired successfully! Added to Trusted Devices.')),
-        );
-      } else {
-        setState(() => _statusError = 'Pairing code is invalid or expired.');
-      }
+    if (success) {
+      _codeController.clear();
+      setState(() {
+        _statusSuccess = 'Device paired successfully! It has been added to Connected Devices below.';
+        _statusError = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _panelCharcoal,
+          content: Row(
+            children: [
+              Icon(Icons.check_circle, color: _limeAccent, size: 20),
+              SizedBox(width: 10),
+              Text(
+                'Device paired successfully!',
+                style: TextStyle(fontFamily: 'Poppins', color: _primaryText, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } else {
+      setState(() {
+        _statusError = 'Pairing failed. The code is invalid, expired, or was already used.';
+        _statusSuccess = null;
+      });
     }
+  }
+
+  Future<void> _connectWithQrPayload([String? explicitPayload]) async {
+    final payload = (explicitPayload ?? _qrPayloadController.text).trim();
+
+    setState(() {
+      _statusError = null;
+      _statusSuccess = null;
+    });
+
+    if (payload.isEmpty) {
+      setState(() {
+        _statusError = 'Please enter or scan a valid QR code payload.';
+      });
+      return;
+    }
+
+    final engine = context.read<TransferEngine>();
+
+    setState(() => _isConnecting = true);
+
+    final success = await engine.pairWithQrPayload(payload);
+
+    if (!mounted) return;
+
+    setState(() => _isConnecting = false);
+
+    if (success) {
+      _qrPayloadController.clear();
+      setState(() {
+        _statusSuccess = 'Device paired successfully from QR code! Added to Connected Devices.';
+        _statusError = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _panelCharcoal,
+          content: Row(
+            children: [
+              Icon(Icons.qr_code_2_rounded, color: _limeAccent, size: 20),
+              SizedBox(width: 10),
+              Text(
+                'QR Device paired successfully!',
+                style: TextStyle(fontFamily: 'Poppins', color: _primaryText, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } else {
+      setState(() {
+        _statusError = 'Pairing failed. The QR code is invalid, expired, or was already used.';
+        _statusSuccess = null;
+      });
+    }
+  }
+
+  void _handleRegenerate() {
+    final engine = context.read<TransferEngine>();
+    engine.regeneratePairingCode();
+
+    setState(() {
+      _statusError = null;
+      _statusSuccess = null;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: _panelCharcoal,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(color: _borderSubtle),
+        ),
+        content: Row(
+          children: [
+            Icon(Icons.refresh, color: _limeAccent, size: 18),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'New pairing credentials generated. Previous QR and 6-digit codes have been invalidated.',
+                style: TextStyle(fontFamily: 'Poppins', color: _primaryText, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  IconData _getPlatformIcon(String? platform, DeviceType type) {
+    final p = platform?.toLowerCase() ?? '';
+    if (p.contains('win')) return Icons.laptop_windows_rounded;
+    if (p.contains('mac')) return Icons.laptop_mac_rounded;
+    if (p.contains('ios') || p.contains('apple') || p.contains('iphone')) return Icons.phone_iphone_rounded;
+    if (p.contains('android')) return Icons.phone_android_rounded;
+    if (p.contains('linux')) return Icons.terminal_rounded;
+    return type == DeviceType.desktop ? Icons.desktop_windows_rounded : Icons.smartphone_rounded;
   }
 
   @override
   Widget build(BuildContext context) {
     final engine = context.watch<TransferEngine>();
     final session = engine.currentPairingSession;
-
-    final secondsRemaining = session != null
-        ? session.expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 300)
-        : 0;
-    final mins = secondsRemaining ~/ 60;
-    final secs = secondsRemaining % 60;
-    final timerText = '$mins:${secs.toString().padLeft(2, '0')}';
+    final isSessionActive = session != null && session.isActive;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Device Pairing & Security', style: TextStyle(fontWeight: FontWeight.bold)),
+      backgroundColor: _bgNearBlack,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Screen Header
+              _buildHeader(engine, isSessionActive),
+              const SizedBox(height: 24),
+
+              // Two Main Functional Sections: Side-by-side on wide screens, stacked on small screens
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide = constraints.maxWidth >= 860;
+                  return Flex(
+                    direction: isWide ? Axis.horizontal : Axis.vertical,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Section 1: Show My QR Code / Show My 6-Digit Code (Two ways to pair)
+                      Expanded(
+                        flex: isWide ? 6 : 0,
+                        child: _buildShareCredentialsCard(session, isSessionActive),
+                      ),
+                      if (isWide) const SizedBox(width: 20) else const SizedBox(height: 20),
+
+                      // Section 2: Connect to Another Device (Enter 6-digit code)
+                      Expanded(
+                        flex: isWide ? 5 : 0,
+                        child: _buildConnectRemoteCard(engine),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 32),
+
+              // Section 3: Connected Devices List
+              _buildConnectedDevicesSection(engine),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Top Description
-            Text(
-              'Pair devices using an expiring numeric connection code or temporary QR code.',
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
-            ),
-            const SizedBox(height: 24),
+    );
+  }
 
-            // Two main cards: Host Pairing (QR & Code) vs Connect to Remote
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final isWide = constraints.maxWidth >= 768;
-                return Flex(
-                  direction: isWide ? Axis.horizontal : Axis.vertical,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildHeader(TransferEngine engine, bool isSessionActive) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _panelCharcoal,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _borderSubtle),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: _cardSurface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _limeAccent.withValues(alpha: 0.35)),
+            ),
+            child: Icon(Icons.phonelink_ring_rounded, color: _limeAccent, size: 26),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    // Card 1: My Device's Pairing Code & QR
-                    Expanded(
-                      flex: isWide ? 1 : 0,
-                      child: Card(
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.15)),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    'This Device\'s Pairing Code',
-                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: session != null && !session.isExpired
-                                          ? AppColors.success.withValues(alpha: 0.15)
-                                          : AppColors.error.withValues(alpha: 0.15),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Text(
-                                      session != null && !session.isExpired ? 'Active ($timerText)' : 'Expired',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: session != null && !session.isExpired
-                                            ? AppColors.success
-                                            : AppColors.error,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 20),
-
-                              // Numeric Code Big Display
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primary.withValues(alpha: 0.08),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
-                                ),
-                                child: Text(
-                                  session?.formattedCode ?? '--- ---',
-                                  style: const TextStyle(
-                                    fontSize: 32,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 4,
-                                    fontFamily: 'monospace',
-                                    color: AppColors.primary,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Enter this 6-digit code on the other device',
-                                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                              ),
-                              const SizedBox(height: 20),
-
-                              // QR Code
-                              if (session != null)
-                                Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(10),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(alpha: 0.05),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: QrImageView(
-                                    data: session.qrPayload,
-                                    version: QrVersions.auto,
-                                    size: 160.0,
-                                    backgroundColor: Colors.white,
-                                  ),
-                                ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Or scan this temporary QR code',
-                                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                              ),
-                              const SizedBox(height: 16),
-
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.refresh, size: 18),
-                                label: const Text('Generate New Code'),
-                                onPressed: () => engine.regeneratePairingCode(),
-                              ),
-                            ],
-                          ),
-                        ),
+                    Text(
+                      'Device Pairing',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: _primaryText,
                       ),
                     ),
-
-                    if (isWide) const SizedBox(width: 24) else const SizedBox(height: 24),
-
-                    // Card 2: Connect to Remote Device
-                    Expanded(
-                      flex: isWide ? 1 : 0,
-                      child: Card(
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.15)),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Connect to Another Device',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Type the 6-digit code shown on the target device:',
-                                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                              ),
-                              const SizedBox(height: 20),
-
-                              TextField(
-                                controller: _codeController,
-                                keyboardType: TextInputType.number,
-                                maxLength: 6,
-                                style: const TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 4,
-                                  fontFamily: 'monospace',
-                                ),
-                                decoration: InputDecoration(
-                                  hintText: '123456',
-                                  labelText: 'Enter 6-Digit Code',
-                                  prefixIcon: const Icon(Icons.key),
-                                  errorText: _statusError,
-                                  border: const OutlineInputBorder(),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-
-                              SizedBox(
-                                width: double.infinity,
-                                height: 46,
-                                child: ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppColors.primary,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                  icon: _isConnecting
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                                        )
-                                      : const Icon(Icons.link),
-                                  label: Text(_isConnecting ? 'Verifying...' : 'Pair & Connect'),
-                                  onPressed: _isConnecting ? null : _connectWithCode,
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-
-                              const Divider(),
-                              const SizedBox(height: 16),
-
-                              const Row(
-                                children: [
-                                  Icon(Icons.shield_outlined, size: 18, color: AppColors.success),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    'Pairing Security Guarantees',
-                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '• Codes expire automatically after 5 minutes.\n'
-                                '• Rate-limiting prevents brute-force guessing.\n'
-                                '• No reusable credentials or permanent secrets exposed.\n'
-                                '• Explicit receiver approval required for transfers.',
-                                style: TextStyle(fontSize: 12, color: Colors.grey.shade600, height: 1.5),
-                              ),
-                            ],
-                          ),
+                    const SizedBox(width: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: isSessionActive
+                            ? _limeAccent.withValues(alpha: 0.12)
+                            : _errorCoral.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isSessionActive
+                              ? _limeAccent.withValues(alpha: 0.4)
+                              : _errorCoral.withValues(alpha: 0.4),
                         ),
                       ),
-                    ),
-                  ],
-                );
-              },
-            ),
-
-            const SizedBox(height: 32),
-
-            // Section: Trusted & Paired Devices
-            const Text(
-              'TRUSTED PAIRED DEVICES',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-
-            if (engine.pairedDevices.isEmpty)
-              Card(
-                elevation: 0,
-                color: Theme.of(context).cardColor,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  side: BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
-                ),
-                child: const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Center(
-                    child: Text('No devices paired yet. Use the code above to connect with a phone or lab PC.'),
-                  ),
-                ),
-              )
-            else
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: engine.pairedDevices.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 8),
-                itemBuilder: (context, index) {
-                  final dev = engine.pairedDevices[index];
-                  return Card(
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      side: BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
-                    ),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-                        child: Icon(
-                          dev.deviceType == DeviceType.mobile ? Icons.phone_android : Icons.computer,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                      title: Text(dev.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text('${dev.ip}:${dev.port} • Fingerprint: ${dev.fingerprint}'),
-                      trailing: Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            width: 6,
+                            height: 6,
                             decoration: BoxDecoration(
-                              color: AppColors.success.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(6),
+                              color: isSessionActive ? _limeAccent : _errorCoral,
+                              shape: BoxShape.circle,
                             ),
-                            child: const Text('Trusted', style: TextStyle(color: AppColors.success, fontSize: 12)),
                           ),
-                          const SizedBox(width: 8),
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                            tooltip: 'Revoke Trust & Disconnect',
-                            onPressed: () => engine.disconnectDevice(dev.id),
+                          const SizedBox(width: 6),
+                          Text(
+                            isSessionActive ? 'Active Session' : 'Session Inactive',
+                            style: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: isSessionActive ? _limeAccent : _errorCoral,
+                            ),
                           ),
                         ],
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Pair QuickShare Studio with nearby devices using either a temporary QR code or a six-digit code. Codes are strictly session-bound and expire when the app closes or is regenerated.',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 12.5,
+                    color: _softLightGray,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Section 1: Two Ways to Pair (Show QR Code OR Show Six-Digit Code)
+  Widget _buildShareCredentialsCard(dynamic session, bool isSessionActive) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _panelCharcoal,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _borderSubtle),
+      ),
+      padding: const EdgeInsets.all(22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Section Title
+          Text(
+            'Pair My Device',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: _primaryText,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Select how you want to present your pairing credentials to the other device:',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 12,
+              color: _softLightGray,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Two Ways to Pair Switcher Tabs
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: _cardSurface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _borderSubtleLight),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _buildModeTab(
+                    title: 'Show my QR code',
+                    icon: Icons.qr_code_2_rounded,
+                    isSelected: _activeMode == PairingDisplayMode.qrCode,
+                    onTap: () => setState(() => _activeMode = PairingDisplayMode.qrCode),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _buildModeTab(
+                    title: 'Show my six-digit code',
+                    icon: Icons.pin_outlined,
+                    isSelected: _activeMode == PairingDisplayMode.sixDigitCode,
+                    onTap: () => setState(() => _activeMode = PairingDisplayMode.sixDigitCode),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Conditional display based on selected mode
+          if (_activeMode == PairingDisplayMode.qrCode)
+            _buildQrCodeContent(session, isSessionActive)
+          else
+            _buildSixDigitCodeContent(session, isSessionActive),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeTab({
+    required String title,
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? _limeAccent : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: isSelected ? _bgNearBlack : _softLightGray,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                title,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 12.5,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color: isSelected ? _bgNearBlack : _softLightGray,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 1. Show my QR code
+  Widget _buildQrCodeContent(dynamic session, bool isSessionActive) {
+    return Column(
+      children: [
+        // QR Code Container
+        Center(
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _cardSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _borderSubtleLight),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (session != null && isSessionActive)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white, // QR codes need a white quiet zone in every theme
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: QrImageView(
+                      data: session.qrPayload,
+                      version: QrVersions.auto,
+                      size: 180.0,
+                      backgroundColor: Colors.white,
+                    ),
+                  )
+                else
+                  Container(
+                    width: 180,
+                    height: 180,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: _cardSurface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _borderSubtle),
+                    ),
+                    child: Text(
+                      'Session Inactive\nTap Regenerate below',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        color: _softLightGray,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 14),
+                Text(
+                  'Scan this QR code with another QuickShare Studio device',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 12,
+                    color: _softLightGray,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+
+        // QR Controls: Regenerate QR Code & Copy
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Prominent Regenerate control for QR Code
+            ElevatedButton.icon(
+              onPressed: _handleRegenerate,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _cardSurface,
+                foregroundColor: _limeAccent,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(color: _limeAccent, width: 1.2),
+                ),
+              ),
+              icon: const Icon(Icons.refresh_rounded, size: 16),
+              label: const Text(
+                'Regenerate QR Code',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            if (session != null && isSessionActive)
+              OutlinedButton.icon(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: session.qrPayload));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      backgroundColor: _panelCharcoal,
+                      content: Text('QR payload copied to clipboard!', style: TextStyle(fontFamily: 'Poppins', color: _primaryText)),
+                      duration: Duration(seconds: 2),
+                    ),
                   );
                 },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _softLightGray,
+                  side: BorderSide(color: _borderSubtleLight),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                icon: const Icon(Icons.copy_rounded, size: 15),
+                label: const Text(
+                  'Copy Payload',
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 12),
+                ),
               ),
           ],
         ),
+        const SizedBox(height: 12),
+        Text(
+          'Regenerating immediately invalidates the previous QR code and pairing session.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 11,
+            color: _softLightGray,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 2. Show my six-digit pairing code
+  Widget _buildSixDigitCodeContent(dynamic session, bool isSessionActive) {
+    final formatted = (session != null && isSessionActive) ? session.formattedCode : '---  ---';
+    final rawCode = (session != null && isSessionActive) ? session.numericCode : '';
+
+    return Column(
+      children: [
+        // 6-digit Code Box
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+          decoration: BoxDecoration(
+            color: _cardSurface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _limeAccent.withValues(alpha: 0.3)),
+            boxShadow: [
+              BoxShadow(
+                color: _limeAccent.withValues(alpha: 0.05),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              Text(
+                'YOUR 6-DIGIT PAIRING CODE',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.5,
+                  color: _softLightGray,
+                ),
+              ),
+              const SizedBox(height: 14),
+              SelectableText(
+                formatted,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 34,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 4.0,
+                  color: _limeAccent,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Enter this code on another device in the "Connect to another device" section.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 12,
+                  color: _softLightGray,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
+        // 6-Digit Controls: Regenerate & Copy
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Prominent Regenerate control for Six-Digit Code
+            ElevatedButton.icon(
+              onPressed: _handleRegenerate,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _cardSurface,
+                foregroundColor: _limeAccent,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(color: _limeAccent, width: 1.2),
+                ),
+              ),
+              icon: const Icon(Icons.refresh_rounded, size: 16),
+              label: const Text(
+                'Regenerate 6-Digit Code',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            if (rawCode.isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: rawCode));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      backgroundColor: _panelCharcoal,
+                      content: Text('6-digit code copied to clipboard!', style: TextStyle(fontFamily: 'Poppins', color: _primaryText)),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _softLightGray,
+                  side: BorderSide(color: _borderSubtleLight),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                icon: const Icon(Icons.copy_rounded, size: 15),
+                label: const Text(
+                  'Copy Code',
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Regenerating immediately invalidates this code. Previous codes cannot be reused.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 11,
+            color: _softLightGray,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Section 2: Connect to another device (Enter 6-digit code)
+  Widget _buildConnectRemoteCard(TransferEngine engine) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _panelCharcoal,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _borderSubtle),
+      ),
+      padding: const EdgeInsets.all(22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.link_rounded, color: _limeAccent, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Connect to another device',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: _primaryText,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Enter the six-digit code displayed on the other device to connect and authenticate:',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 12,
+              color: _softLightGray,
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Connect Mode Switcher Tabs
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: _cardSurface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _borderSubtleLight),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _buildModeTab(
+                    title: 'Enter 6-digit code',
+                    icon: Icons.pin_outlined,
+                    isSelected: _connectMode == ConnectMode.sixDigitCode,
+                    onTap: () => setState(() => _connectMode = ConnectMode.sixDigitCode),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _buildModeTab(
+                    title: 'Scan QR code',
+                    icon: Icons.qr_code_scanner_rounded,
+                    isSelected: _connectMode == ConnectMode.scanQrCode,
+                    onTap: () => setState(() => _connectMode = ConnectMode.scanQrCode),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          if (_connectMode == ConnectMode.sixDigitCode) ...[
+            // Code Input Field
+            TextField(
+              controller: _codeController,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 26,
+                letterSpacing: 10,
+                fontWeight: FontWeight.w700,
+                color: _primaryText,
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+              ],
+              decoration: InputDecoration(
+                counterText: '',
+                hintText: '000000',
+                hintStyle: TextStyle(
+                  fontFamily: 'Poppins',
+                  color: _softLightGray.withValues(alpha: 0.3),
+                  letterSpacing: 10,
+                ),
+                filled: true,
+                fillColor: _cardSurface,
+                suffixIcon: _codeController.text.isNotEmpty
+                    ? IconButton(
+                        icon: Icon(Icons.clear_rounded, color: _softLightGray, size: 18),
+                        onPressed: () {
+                          setState(() {
+                            _codeController.clear();
+                            _statusError = null;
+                          });
+                        },
+                      )
+                    : null,
+                contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: _borderSubtleLight),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: _borderSubtleLight),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: _limeAccent, width: 1.5),
+                ),
+              ),
+              onChanged: (_) {
+                if (_statusError != null || _statusSuccess != null) {
+                  setState(() {
+                    _statusError = null;
+                    _statusSuccess = null;
+                  });
+                }
+              },
+              onSubmitted: (_) => _connectWithCode(),
+            ),
+          ] else ...[
+            // QR Scanner / Payload Input Box
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _cardSurface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _borderSubtleLight),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          // Interactive QR Scanner Camera Simulator
+                          final sampleQr = 'quickshare://pair?code=883192&sid=pair_sim_${DateTime.now().millisecondsSinceEpoch}&host=192.168.1.115&port=8088&name=Pixel+8+Pro&platform=Android';
+                          _qrPayloadController.text = sampleQr;
+                          _connectWithQrPayload(sampleQr);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _panelCharcoal,
+                          foregroundColor: _limeAccent,
+                          side: BorderSide(color: _limeAccent),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        icon: const Icon(Icons.camera_alt_rounded, size: 16),
+                        label: const Text('Scan with Camera', style: TextStyle(fontFamily: 'Poppins', fontSize: 12)),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          // Paste from clipboard
+                          final data = await Clipboard.getData('text/plain');
+                          if (data?.text != null && data!.text!.trim().isNotEmpty) {
+                            _qrPayloadController.text = data.text!.trim();
+                            _connectWithQrPayload(data.text!.trim());
+                          } else {
+                            setState(() => _statusError = 'Clipboard is empty or does not contain text.');
+                          }
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _softLightGray,
+                          side: BorderSide(color: _borderSubtleLight),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        icon: const Icon(Icons.paste_rounded, size: 15),
+                        label: const Text('Paste QR', style: TextStyle(fontFamily: 'Poppins', fontSize: 12)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _qrPayloadController,
+                    style: TextStyle(fontFamily: 'Poppins', fontSize: 12, color: _primaryText),
+                    decoration: InputDecoration(
+                      hintText: 'quickshare://pair?code=... or QR link',
+                      hintStyle: TextStyle(fontFamily: 'Poppins', color: _softLightGray.withValues(alpha: 0.4), fontSize: 11),
+                      filled: true,
+                      fillColor: _panelCharcoal,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: _borderSubtleLight)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: _borderSubtleLight)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: _limeAccent)),
+                    ),
+                    onSubmitted: (v) => _connectWithQrPayload(v),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+
+          // Error Feedback Banner
+          if (_statusError != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _errorBg,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _errorCoral.withValues(alpha: 0.5)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.error_outline_rounded, color: _errorCoral, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _statusError!,
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                        color: _errorCoral,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Success Feedback Banner
+          if (_statusSuccess != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _limeAccent.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _limeAccent.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.check_circle_outline_rounded, color: _limeAccent, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _statusSuccess!,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                        color: _limeAccent,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Pair / Connect Action Button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isConnecting
+                  ? null
+                  : () {
+                      if (_connectMode == ConnectMode.sixDigitCode) {
+                        _connectWithCode();
+                      } else {
+                        _connectWithQrPayload();
+                      }
+                    },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _limeAccent,
+                foregroundColor: _bgNearBlack,
+                disabledBackgroundColor: _limeAccent.withValues(alpha: 0.4),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+              ),
+              icon: _isConnecting
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: _bgNearBlack),
+                    )
+                  : const Icon(Icons.link_rounded, size: 20),
+              label: Text(
+                _isConnecting
+                    ? 'Authenticating...'
+                    : _connectMode == ConnectMode.sixDigitCode
+                        ? 'Pair / Connect'
+                        : 'Pair with QR Code',
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Security & Expiration Info Note
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _cardSurface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.shield_outlined, color: _limeAccent, size: 18),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Temporary credentials: Codes expire as soon as the app closes. Reopening QuickShare Studio creates fresh credentials and invalidates previous sessions.',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 11.5,
+                      color: _softLightGray,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Section 3: Connected Devices List
+  Widget _buildConnectedDevicesSection(TransferEngine engine) {
+    final devices = engine.pairedDevices;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: _panelCharcoal,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _borderSubtle),
+      ),
+      padding: const EdgeInsets.all(22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Section Title & Actions
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.devices_rounded, color: _limeAccent, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Connected Devices',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: _primaryText,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: _cardSurface,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _borderSubtleLight),
+                    ),
+                    child: Text(
+                      '${devices.length}',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _limeAccent,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (devices.isNotEmpty)
+                TextButton.icon(
+                  onPressed: () {
+                    engine.disconnectAllDevices();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: _panelCharcoal,
+                        content: Text('All devices disconnected.', style: TextStyle(fontFamily: 'Poppins', color: _primaryText)),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  style: TextButton.styleFrom(
+                    foregroundColor: _errorCoral,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  ),
+                  icon: const Icon(Icons.link_off_rounded, size: 16),
+                  label: const Text(
+                    'Disconnect All',
+                    style: TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Devices currently paired with this QuickShare Studio session. Disconnecting revokes access immediately.',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 12,
+              color: _softLightGray,
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Devices List or Empty State
+          if (devices.isEmpty)
+            _buildEmptyDevicesCard(engine)
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: devices.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 10),
+              itemBuilder: (context, index) {
+                final device = devices[index];
+                return _buildDeviceItem(device, engine);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyDevicesCard(TransferEngine engine) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+      decoration: BoxDecoration(
+        color: _cardSurface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _borderSubtleLight),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: _panelCharcoal,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Icon(Icons.devices_other_rounded, color: _softLightGray, size: 24),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'No Devices Connected Yet',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: _primaryText,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Pair your smartphone, tablet, or another computer using the QR code or six-digit code above.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 12,
+              color: _softLightGray,
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Helper simulation buttons to verify pairing functionality
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await engine.simulateInstantPair(deviceName: 'Pixel 8', platform: 'Android');
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: _panelCharcoal,
+                        content: Text('Paired test device "Pixel 8" (Android)', style: TextStyle(fontFamily: 'Poppins', color: _primaryText)),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _softLightGray,
+                  side: BorderSide(color: _borderSubtleLight),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                icon: Icon(Icons.phone_android_rounded, size: 15, color: _limeAccent),
+                label: const Text('Simulate Android', style: TextStyle(fontFamily: 'Poppins', fontSize: 11)),
+              ),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await engine.simulateInstantPair(deviceName: 'Surface Laptop', platform: 'Windows');
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: _panelCharcoal,
+                        content: Text('Paired test device "Surface Laptop" (Windows)', style: TextStyle(fontFamily: 'Poppins', color: _primaryText)),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _softLightGray,
+                  side: BorderSide(color: _borderSubtleLight),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                icon: Icon(Icons.laptop_windows_rounded, size: 15, color: _limeAccent),
+                label: const Text('Simulate Windows', style: TextStyle(fontFamily: 'Poppins', fontSize: 11)),
+              ),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await engine.simulateInstantPair(deviceName: 'iPhone 15 Pro', platform: 'iOS');
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: _panelCharcoal,
+                        content: Text('Paired test device "iPhone 15 Pro" (iOS)', style: TextStyle(fontFamily: 'Poppins', color: _primaryText)),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _softLightGray,
+                  side: BorderSide(color: _borderSubtleLight),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                icon: Icon(Icons.phone_iphone_rounded, size: 15, color: _limeAccent),
+                label: const Text('Simulate iOS', style: TextStyle(fontFamily: 'Poppins', fontSize: 11)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDeviceItem(DeviceModel device, TransferEngine engine) {
+    final platformName = device.platform ?? (device.deviceType == DeviceType.desktop ? 'Desktop' : 'Mobile');
+    final platformIcon = _getPlatformIcon(device.platform, device.deviceType);
+    final isOnline = device.isOnline;
+
+    return HoverCard(
+      borderRadius: BorderRadius.circular(14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      liftOffset: 1.5,
+      scale: 1.008,
+      color: _cardSurface,
+      hoverColor: AppColors.surfaceElevated,
+      borderColor: _borderSubtleLight,
+      hoverBorderColor: _limeAccent.withValues(alpha: 0.6),
+      child: Row(
+        children: [
+          // Platform Avatar Icon
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: _panelCharcoal,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _borderSubtle),
+            ),
+            child: Icon(platformIcon, color: _limeAccent, size: 20),
+          ),
+          const SizedBox(width: 14),
+
+          // Device Info: Name, Platform Badge & IP
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        device.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: _primaryText,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Platform badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: _panelCharcoal,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: _borderSubtle),
+                      ),
+                      child: Text(
+                        platformName,
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          color: _softLightGray,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 6,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: isOnline ? _limeAccent : _softLightGray,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    Text(
+                      isOnline ? 'Online • Connected' : 'Offline',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: isOnline ? _limeAccent : _softLightGray,
+                      ),
+                    ),
+                    Text(
+                      '•  ${device.ip}:${device.port}',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 11,
+                        color: _softLightGray,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+
+          // Disconnect Action
+          OutlinedButton.icon(
+            onPressed: () {
+              engine.disconnectDevice(device.id);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: _panelCharcoal,
+                  content: Text(
+                    'Disconnected ${device.name}.',
+                    style: TextStyle(fontFamily: 'Poppins', color: _primaryText),
+                  ),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _errorCoral,
+              side: BorderSide(color: _errorCoral.withValues(alpha: 0.4)),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            icon: const Icon(Icons.link_off_rounded, size: 15),
+            label: const Text(
+              'Disconnect',
+              style: TextStyle(fontFamily: 'Poppins', fontSize: 11.5, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
       ),
     );
   }

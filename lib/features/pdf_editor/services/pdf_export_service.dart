@@ -51,18 +51,22 @@ class PdfExportService {
               final imgItem = page.images[i];
               final pdfImage = pw.MemoryImage(imgItem.bytes);
 
-              // Positioned image matching exact calculated layout
+              final captionH = page.showCaptions ? 18.0 : 0.0;
+              final imageSlotHeight = (cell.cellRect.height - captionH).clamp(10.0, cell.cellRect.height);
+
+              // Positioned image centered perfectly inside the cell slot
               children.add(
                 pw.Positioned(
-                  left: cell.imageRect.left,
-                  top: cell.imageRect.top,
+                  left: cell.cellRect.left,
+                  top: cell.cellRect.top,
                   child: pw.SizedBox(
-                    width: cell.imageRect.width,
-                    height: cell.imageRect.height,
-                    child: pw.ClipRect(
+                    width: cell.cellRect.width,
+                    height: imageSlotHeight,
+                    child: pw.Center(
                       child: pw.Image(
                         pdfImage,
                         fit: page.fitMode == ImageFitMode.contain ? pw.BoxFit.contain : pw.BoxFit.cover,
+                        alignment: pw.Alignment.center,
                       ),
                     ),
                   ),
@@ -74,18 +78,20 @@ class PdfExportService {
                 final ocrContent = imgItem.caption ?? defaultOcrText ?? 'Screenshot: ${imgItem.name}';
                 children.add(
                   pw.Positioned(
-                    left: cell.imageRect.left,
-                    top: cell.imageRect.top,
+                    left: cell.cellRect.left,
+                    top: cell.cellRect.top,
                     child: pw.SizedBox(
-                      width: cell.imageRect.width,
-                      height: cell.imageRect.height,
-                      child: pw.Opacity(
-                        opacity: 0.001, // Invisible selectable text layer
-                        child: pw.Text(
-                          ocrContent,
-                          style: const pw.TextStyle(
-                            fontSize: 10,
-                            color: pw_pdf.PdfColors.black,
+                      width: cell.cellRect.width,
+                      height: imageSlotHeight,
+                      child: pw.Center(
+                        child: pw.Opacity(
+                          opacity: 0.001, // Invisible selectable text layer
+                          child: pw.Text(
+                            ocrContent,
+                            style: const pw.TextStyle(
+                              fontSize: 10,
+                              color: pw_pdf.PdfColors.black,
+                            ),
                           ),
                         ),
                       ),
@@ -95,24 +101,26 @@ class PdfExportService {
               }
 
               // Optional Captions
-              if (page.showCaptions && cell.captionRect != null) {
+              if (page.showCaptions) {
                 final captionText = imgItem.caption ?? 'Figure ${page.pageNumber}.${i + 1}: ${imgItem.name}';
                 children.add(
                   pw.Positioned(
-                    left: cell.captionRect!.left,
-                    top: cell.captionRect!.top,
+                    left: cell.cellRect.left,
+                    top: cell.cellRect.top + imageSlotHeight + 2,
                     child: pw.SizedBox(
-                      width: cell.captionRect!.width,
-                      height: cell.captionRect!.height,
-                      child: pw.Text(
-                        captionText,
-                        style: pw.TextStyle(
-                          fontSize: 8.5,
-                          fontWeight: pw.FontWeight.bold,
-                          color: pw_pdf.PdfColors.grey800,
+                      width: cell.cellRect.width,
+                      height: 16.0,
+                      child: pw.Center(
+                        child: pw.Text(
+                          captionText,
+                          style: pw.TextStyle(
+                            fontSize: 8.5,
+                            fontWeight: pw.FontWeight.bold,
+                            color: pw_pdf.PdfColors.grey800,
+                          ),
+                          textAlign: pw.TextAlign.center,
+                          maxLines: 1,
                         ),
-                        textAlign: pw.TextAlign.center,
-                        maxLines: 1,
                       ),
                     ),
                   ),
@@ -134,8 +142,12 @@ class PdfExportService {
               );
             }
 
-            return pw.Stack(
-              children: children,
+            return pw.SizedBox(
+              width: pageFormat.width,
+              height: pageFormat.height,
+              child: pw.Stack(
+                children: children,
+              ),
             );
           },
         ),

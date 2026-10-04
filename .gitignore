@@ -46,3 +46,25 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Built binaries & downloads (published via GitHub Releases instead)
+/web/downloads/
+/QuickShareStudio.exe
+/dist/
+
+# Local launcher runtime state
+active_port.txt
+__pycache__/
+
+# Personal AI-assistant / workflow tooling (kept locally, not part of the app)
+/.agent/
+/.agents/
+/.gemini/
+/.gsd/
+/adapters/
+/GSD-STYLE.md
+/PROJECT_RULES.md
+/model_capabilities.yaml
+/scripts/validate-*
+/scripts/search_repo.*
+/scripts/setup_search.*

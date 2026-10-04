@@ -1,0 +1,35 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "QuickShare Studio (Chrome - Live Dev)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "chrome",
+      "args": ["-d", "chrome"]
+    },
+    {
+      "name": "QuickShare Studio (Edge - Live Dev)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "edge",
+      "args": ["-d", "edge"]
+    },
+    {
+      "name": "QuickShare Studio (Windows Desktop - Live Dev)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "windows",
+      "args": ["-d", "windows"]
+    },
+    {
+      "name": "QuickShare Studio (Auto-Detect Device)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart"
+    }
+  ]
+}

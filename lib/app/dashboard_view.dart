@@ -3,8 +3,9 @@ import 'package:provider/provider.dart';
 import '../../data/services/transfer_engine.dart';
 import '../../core/utils/format_utils.dart';
 import '../../core/constants.dart';
+import '../core/widgets/hover_card.dart';
 
-class DashboardView extends StatelessWidget {
+class DashboardView extends StatefulWidget {
   final Function(int navIndex) onNavigate;
 
   const DashboardView({
@@ -13,8 +14,37 @@ class DashboardView extends StatelessWidget {
   });
 
   @override
+  State<DashboardView> createState() => _DashboardViewState();
+}
+
+class _DashboardViewState extends State<DashboardView> {
+  final TextEditingController _deviceNameController = TextEditingController();
+  bool _isEditingName = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        final engine = context.read<TransferEngine>();
+        _deviceNameController.text = engine.localDeviceName;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _deviceNameController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final engine = context.watch<TransferEngine>();
+
+    if (!_isEditingName && _deviceNameController.text != engine.localDeviceName) {
+      _deviceNameController.text = engine.localDeviceName;
+    }
 
     return Scaffold(
       body: SingleChildScrollView(
@@ -24,9 +54,13 @@ class DashboardView extends StatelessWidget {
           children: [
             // Header: Device Identity & Connection Card
             _buildDeviceStatusCard(context, engine),
+            const SizedBox(height: 20),
+
+            // Section: Name Your Device (Requirement 6)
+            _buildNameYourDeviceCard(context, engine),
             const SizedBox(height: 28),
 
-            // Section: Primary Actions (10 Core Modules)
+            // Section: Primary Actions (Core Modules)
             const Text(
               'PRIMARY ACTIONS & WORKSPACE',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey),
@@ -61,22 +95,141 @@ class DashboardView extends StatelessWidget {
 
   Widget _buildDeviceStatusCard(BuildContext context, TransferEngine engine) {
     return Container(
-      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF4F46E5), Color(0xFF6366F1), Color(0xFF06B6D4)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
+        gradient: AppColors.heroGlassGradient,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: AppColors.white.withValues(alpha: 0.18), width: 1.2),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF4F46E5).withValues(alpha: 0.3),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
+            color: AppColors.dashboardBg.withValues(alpha: 0.45),
+            blurRadius: 28,
+            offset: const Offset(0, 10),
+          ),
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.25),
+            blurRadius: 18,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
+      padding: const EdgeInsets.all(26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppColors.white.withValues(alpha: 0.22)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Icon(Icons.bolt, color: AppColors.white, size: 26),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            engine.localDeviceName,
+                            style: TextStyle(
+                              color: AppColors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.4,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'IP: ${engine.localIp} • Port: ${engine.localPort} • Session Code: ${engine.currentPairingSession?.numericCode ?? "---"}',
+                            style: TextStyle(color: AppColors.secondaryText, fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: AppColors.white.withValues(alpha: 0.2)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.25),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF34D399),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Color(0xFF34D399),
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text('Ready to Share', style: TextStyle(color: AppColors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          // Stats row with 4 frosted navy glass rounded square cards
+          Row(
+            children: [
+              Expanded(child: _statItem('Paired Devices', '${engine.pairedDevices.length}')),
+              const SizedBox(width: 10),
+              Expanded(child: _statItem('Network Status', engine.isReceivingPaused ? 'Paused' : 'Active')),
+              const SizedBox(width: 10),
+              Expanded(child: _statItem('History Records', '${engine.historyRecords.length}')),
+              const SizedBox(width: 10),
+              Expanded(child: _statItem('Pairing Code', engine.currentPairingSession?.numericCode ?? '---')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Name Your Device Card (Requirement 6)
+  Widget _buildNameYourDeviceCard(BuildContext context, TransferEngine engine) {
+    return HoverCard(
+      borderRadius: BorderRadius.circular(20),
+      padding: const EdgeInsets.all(20),
+      liftOffset: 2.0,
+      scale: 1.008,
+      color: AppColors.cardBg,
+      borderColor: AppColors.white.withValues(alpha: 0.14),
+      hoverBorderColor: AppColors.primaryAccent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -85,56 +238,116 @@ class DashboardView extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.share, color: Colors.white, size: 24),
-                  ),
-                  const SizedBox(width: 14),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        engine.localDeviceName,
-                        style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        'IP: ${engine.localIp} • Port: ${engine.localPort} • Online',
-                        style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13),
-                      ),
-                    ],
+                  Icon(Icons.edit_note, color: AppColors.primaryAccent, size: 22),
+                  SizedBox(width: 8),
+                  Text(
+                    'Name Your Device',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.white),
                   ),
                 ],
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(20),
+              if (engine.isCustomDeviceNameSaved)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.check_circle, color: Color(0xFF10B981), size: 14),
+                      SizedBox(width: 4),
+                      Text('Saved to Session', style: TextStyle(color: Color(0xFF10B981), fontSize: 11, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                 ),
-                child: Row(
-                  children: [
-                    Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF4ADE80), shape: BoxShape.circle)),
-                    const SizedBox(width: 8),
-                    const Text('Ready to Share', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
             ],
           ),
-          const SizedBox(height: 20),
-          Divider(color: Colors.white.withValues(alpha: 0.2), height: 1),
-          const SizedBox(height: 16),
+          const SizedBox(height: 6),
+          Text(
+            'Set a friendly name (e.g. "Abhijeet\'s Laptop" or "Workstation Lab") displayed to paired devices.',
+            style: TextStyle(color: AppColors.secondaryText, fontSize: 12),
+          ),
+          const SizedBox(height: 14),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _statItem('Paired Devices', '${engine.pairedDevices.length}'),
-              _statItem('Nearby Detected', '${engine.nearbyDiscoveredDevices.length}'),
-              _statItem('Completed Transfers', '${engine.historyRecords.length}'),
-              _statItem('Pairing Code', engine.currentPairingSession?.numericCode ?? '---'),
+              Expanded(
+                child: TextField(
+                  controller: _deviceNameController,
+                  style: TextStyle(color: AppColors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                  decoration: InputDecoration(
+                    hintText: 'Enter custom device name...',
+                    hintStyle: TextStyle(color: AppColors.white.withValues(alpha: 0.38)),
+                    prefixIcon: Icon(Icons.laptop_chromebook, color: AppColors.primaryAccent, size: 20),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: AppColors.white.withValues(alpha: 0.15)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: AppColors.white.withValues(alpha: 0.15)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: AppColors.primaryAccent, width: 1.5),
+                    ),
+                    filled: true,
+                    fillColor: AppColors.cardBg,
+                  ),
+                  onChanged: (val) {
+                    setState(() => _isEditingName = true);
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.nearBlack,
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                icon: const Icon(Icons.save, size: 16),
+                label: const Text('Save', style: TextStyle(fontWeight: FontWeight.bold)),
+                onPressed: () async {
+                  final name = _deviceNameController.text.trim();
+                  if (name.isNotEmpty) {
+                    await engine.setCustomDeviceName(name);
+                    setState(() => _isEditingName = false);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Device name updated to "$name" and persisted across sessions.')),
+                      );
+                    }
+                  }
+                },
+              ),
+              if (engine.isCustomDeviceNameSaved) ...[
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.secondaryText,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  ),
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('Reset'),
+                  onPressed: () async {
+                    await engine.resetCustomDeviceName();
+                    setState(() {
+                      _isEditingName = false;
+                      _deviceNameController.text = engine.localDeviceName;
+                    });
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Device name reset to default.')),
+                      );
+                    }
+                  },
+                ),
+              ],
             ],
           ),
         ],
@@ -143,86 +356,87 @@ class DashboardView extends StatelessWidget {
   }
 
   Widget _statItem(String label, String value) {
-    return Column(
-      children: [
-        Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
-        const SizedBox(height: 2),
-        Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 11)),
-      ],
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      decoration: BoxDecoration(
+        color: AppColors.cardBg.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.white.withValues(alpha: 0.12), width: 1.0),
+      ),
+      child: Column(
+        children: [
+          Text(value, style: TextStyle(color: AppColors.primaryAccent, fontWeight: FontWeight.w900, fontSize: 17)),
+          const SizedBox(height: 3),
+          Text(label, style: TextStyle(color: AppColors.secondaryText, fontSize: 11)),
+        ],
+      ),
     );
   }
 
   Widget _buildActionGrid(BuildContext context) {
     final actions = [
       (
-        title: 'Create PDF',
-        subtitle: 'Multi-page studio & 7 layouts',
+        title: 'PDF Studio',
+        subtitle: 'Arrange screenshots into structured multi-page PDF',
         icon: Icons.picture_as_pdf,
-        color: const Color(0xFF6366F1),
+        color: const Color(0xFFEF4444),
         navIndex: 1,
       ),
       (
-        title: 'Connect Device',
-        subtitle: 'QR code & 6-digit code pairing',
-        icon: Icons.qr_code_scanner,
-        color: const Color(0xFF06B6D4),
+        title: 'Device Pairing',
+        subtitle: 'Session-based 6-digit numeric & QR pairing',
+        icon: Icons.qr_code_2,
+        color: const Color(0xFF10B981),
         navIndex: 2,
       ),
       (
-        title: 'Nearby Devices',
-        subtitle: 'Auto-discover on local network',
-        icon: Icons.wifi_find,
-        color: const Color(0xFF10B981),
+        title: 'Send Files',
+        subtitle: 'Direct transfer to paired devices',
+        icon: Icons.send_rounded,
+        color: AppColors.primaryAccent,
         navIndex: 3,
       ),
       (
-        title: 'Send Files',
-        subtitle: 'Transfer to one or multiple devices',
-        icon: Icons.send_rounded,
-        color: const Color(0xFF3B82F6),
+        title: 'Received Items',
+        subtitle: 'View & download verified inbound files',
+        icon: Icons.move_to_inbox,
+        color: const Color(0xFF0D9488),
         navIndex: 4,
       ),
       (
         title: 'Screenshot Sessions',
-        subtitle: 'Organize lab screenshots & notes',
+        subtitle: 'Session manager with persistent workspaces',
         icon: Icons.collections,
         color: const Color(0xFF8B5CF6),
         navIndex: 5,
       ),
       (
         title: 'PDF Tools',
-        subtitle: 'Merge, split, compress, OCR',
+        subtitle: 'Universal Converter, merge, split, compress',
         icon: Icons.build_circle_outlined,
         color: const Color(0xFFEC4899),
         navIndex: 6,
       ),
       (
         title: 'Universal Clipboard',
-        subtitle: 'Smart sync text & images',
+        subtitle: 'Instant sync text across devices',
         icon: Icons.content_paste_go,
         color: const Color(0xFFF59E0B),
         navIndex: 7,
       ),
       (
-        title: 'Transfer History',
-        subtitle: 'Inspect logs, verify & resend',
+        title: 'HISTORY',
+        subtitle: 'Persistent log of sent & received files',
         icon: Icons.history,
         color: const Color(0xFF14B8A6),
         navIndex: 8,
       ),
       (
-        title: 'Saved Templates',
-        subtitle: 'Lab presets & contact sheets',
-        icon: Icons.dashboard_customize_outlined,
-        color: const Color(0xFF64748B),
-        navIndex: 9,
-      ),
-      (
         title: 'Settings & Security',
-        subtitle: 'App PIN lock, private transfer',
+        subtitle: 'Download paths, auto-save & security mode',
         icon: Icons.lock_outline,
         color: const Color(0xFFE11D48),
-        navIndex: 10,
+        navIndex: 9,
       ),
     ];
 
@@ -231,69 +445,69 @@ class DashboardView extends StatelessWidget {
         final cols = constraints.maxWidth >= 1000
             ? 5
             : constraints.maxWidth >= 750
-                ? 4
+                ? 3
                 : constraints.maxWidth >= 480
-                    ? 3
-                    : 2;
+                    ? 2
+                    : 1;
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: cols,
-            childAspectRatio: 1.35,
+            childAspectRatio: 1.45,
             crossAxisSpacing: 14,
             mainAxisSpacing: 14,
           ),
           itemCount: actions.length,
           itemBuilder: (context, i) {
             final a = actions[i];
-            return InkWell(
-              onTap: () => onNavigate(a.navIndex),
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).cardColor,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.15)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.02),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: a.color.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(8),
+            return HoverCard(
+              onTap: () => widget.onNavigate(a.navIndex),
+              borderRadius: BorderRadius.circular(18),
+              padding: const EdgeInsets.all(14),
+              liftOffset: 3.5,
+              scale: 1.025,
+              color: AppColors.cardBg,
+              hoverColor: AppColors.surfaceElevated,
+              borderColor: AppColors.white.withValues(alpha: 0.12),
+              hoverBorderColor: AppColors.primaryAccent,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: a.color.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(a.icon, color: a.color, size: 20),
                       ),
-                      child: Icon(a.icon, color: a.color, size: 20),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      a.title,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                    const SizedBox(height: 2),
-                    Expanded(
-                      child: Text(
+                      Icon(Icons.arrow_forward, size: 14, color: AppColors.white.withValues(alpha: 0.3)),
+                    ],
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        a.title,
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: AppColors.white),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
                         a.subtitle,
-                        style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+                        style: TextStyle(color: AppColors.secondaryText, fontSize: 10.5),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+                ],
               ),
             );
           },
@@ -303,46 +517,60 @@ class DashboardView extends StatelessWidget {
   }
 
   Widget _buildActiveTransfersWidget(BuildContext context, TransferEngine engine) {
-    return Column(
-      children: [
-        for (final t in engine.activeTransfers.take(3))
-          Card(
-            elevation: 0,
-            margin: const EdgeInsets.only(bottom: 8),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-              side: BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Row(
+    return ListView.separated(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: engine.activeTransfers.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final t = engine.activeTransfers[index];
+        return HoverCard(
+          borderRadius: BorderRadius.circular(16),
+          padding: const EdgeInsets.all(16),
+          liftOffset: 2.0,
+          scale: 1.01,
+          color: AppColors.cardBg,
+          borderColor: AppColors.white.withValues(alpha: 0.12),
+          hoverBorderColor: AppColors.primaryAccent,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Icon(Icons.sync, color: AppColors.primary),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(t.fileName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                        const SizedBox(height: 4),
-                        LinearProgressIndicator(
-                          value: t.progress,
-                          backgroundColor: Colors.grey.withValues(alpha: 0.15),
-                          valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
-                        ),
-                      ],
-                    ),
+                  Row(
+                    children: [
+                      Icon(Icons.sync, color: AppColors.primaryAccent, size: 18),
+                      const SizedBox(width: 8),
+                      Text(t.fileName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                    ],
                   ),
-                  const SizedBox(width: 16),
+                  Text('${(t.progress * 100).round()}%', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primaryAccent)),
+                ],
+              ),
+              const SizedBox(height: 10),
+              LinearProgressIndicator(
+                value: t.progress,
+                backgroundColor: AppColors.white.withValues(alpha: 0.08),
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryAccent),
+                minHeight: 6,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Peer: ${t.peerDeviceName}', style: TextStyle(fontSize: 11, color: AppColors.secondaryText)),
                   Text(
-                    '${(t.progress * 100).round()}%',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    '${FormatUtils.formatBytes((t.fileSizeBytes * t.progress).round())} / ${FormatUtils.formatBytes(t.fileSizeBytes)}',
+                    style: TextStyle(fontSize: 11, color: AppColors.secondaryText),
                   ),
                 ],
               ),
-            ),
+            ],
           ),
-      ],
+        );
+      },
     );
   }
 
@@ -350,41 +578,76 @@ class DashboardView extends StatelessWidget {
     if (engine.historyRecords.isEmpty) {
       return Card(
         elevation: 0,
+        color: AppColors.cardBg,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-          side: BorderSide(color: Colors.grey.withValues(alpha: 0.15)),
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: AppColors.white.withValues(alpha: 0.12)),
         ),
-        child: const Padding(
+        child: Padding(
           padding: EdgeInsets.all(28),
-          child: Center(child: Text('No transfers yet. Connect a device or export a PDF to begin.')),
+          child: Center(
+            child: Column(
+              children: [
+                Icon(Icons.history_toggle_off, size: 36, color: AppColors.secondaryText),
+                SizedBox(height: 8),
+                Text('No recent transfers recorded. Real file transfers will appear here.', style: TextStyle(color: AppColors.secondaryText, fontSize: 12)),
+              ],
+            ),
+          ),
         ),
       );
     }
 
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.15)),
-      ),
-      child: ListView.separated(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: engine.historyRecords.take(4).length,
-        separatorBuilder: (_, _) => const Divider(height: 1),
-        itemBuilder: (context, idx) {
-          final r = engine.historyRecords[idx];
-          return ListTile(
-            leading: const Icon(Icons.check_circle, color: AppColors.success),
-            title: Text(r.fileName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-            subtitle: Text('Sent to ${r.recipientName} • ${FormatUtils.formatBytes(r.fileSize)}'),
-            trailing: Text(
-              FormatUtils.formatTime(r.timestamp),
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
-            ),
-          );
-        },
-      ),
+    final recent = engine.historyRecords.take(5).toList();
+    return ListView.separated(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: recent.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 6),
+      itemBuilder: (context, index) {
+        final record = recent[index];
+        final isCompleted = record.status.toLowerCase() == 'completed';
+        return HoverCard(
+          borderRadius: BorderRadius.circular(12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          liftOffset: 1.5,
+          scale: 1.008,
+          color: AppColors.cardBg,
+          borderColor: AppColors.white.withValues(alpha: 0.08),
+          hoverBorderColor: AppColors.primaryAccent,
+          child: Row(
+            children: [
+              Icon(
+                record.isIncoming ? Icons.arrow_downward : Icons.arrow_upward,
+                color: isCompleted ? const Color(0xFF10B981) : Colors.redAccent,
+                size: 18,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      record.fileName,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      '${record.isIncoming ? "From" : "To"}: ${record.isIncoming ? record.senderName : record.recipientName} • ${FormatUtils.formatBytes(record.fileSize)}',
+                      style: TextStyle(fontSize: 10.5, color: AppColors.secondaryText),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                FormatUtils.formatDateTime(record.timestamp),
+                style: TextStyle(fontSize: 10.5, color: AppColors.secondaryText),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

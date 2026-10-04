@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../models/page_geometry.dart';
 import '../models/layout_preset.dart';
@@ -58,6 +59,12 @@ class LayoutCalculator {
     final cellWidth = ((gridWidth - totalHorizSpacing) / cols).clamp(10.0, gridWidth);
     final cellHeight = ((gridHeight - totalVertSpacing) / rows).clamp(10.0, gridHeight);
 
+    // Exact grid centering on physical sheet
+    final actualGridWidth = (cols * cellWidth) + totalHorizSpacing;
+    final actualGridHeight = (rows * cellHeight) + totalVertSpacing;
+    final startX = (pageWidth - actualGridWidth) / 2.0;
+    final startY = (pageHeight - actualGridHeight) / 2.0;
+
     final captionHeight = showCaptions ? 16.0 : 0.0;
     final usableImageHeight = (cellHeight - captionHeight).clamp(5.0, cellHeight);
 
@@ -67,8 +74,8 @@ class LayoutCalculator {
       final r = index ~/ cols;
       final c = index % cols;
 
-      final cellX = margin + (c * (cellWidth + spacingPoints));
-      final cellY = margin + (r * (cellHeight + spacingPoints));
+      final cellX = startX + (c * (cellWidth + spacingPoints));
+      final cellY = startY + (r * (cellHeight + spacingPoints));
       final cellRect = Rect.fromLTWH(cellX, cellY, cellWidth, cellHeight);
 
       // Default aspect ratio if not specified is standard 16:9 screenshot
@@ -82,19 +89,12 @@ class LayoutCalculator {
       final usableAspect = cellWidth / usableImageHeight;
 
       if (fitMode == ImageFitMode.contain) {
-        if (usableAspect > imgAspect) {
-          // Cell is wider than image -> height fills, width is centered
-          final w = usableImageHeight * imgAspect;
-          final x = cellX + (cellWidth - w) / 2.0;
-          final y = cellY;
-          fittedImageRect = Rect.fromLTWH(x, y, w, usableImageHeight);
-        } else {
-          // Cell is taller than image -> width fills, height is centered
-          final h = cellWidth / imgAspect;
-          final x = cellX;
-          final y = cellY + (usableImageHeight - h) / 2.0;
-          fittedImageRect = Rect.fromLTWH(x, y, cellWidth, h);
-        }
+        // Compute fitted dimensions preserving aspect ratio and centering both horizontally & vertically
+        final imageW = math.min(cellWidth, usableImageHeight * imgAspect);
+        final imageH = imageW / imgAspect;
+        final x = cellX + (cellWidth - imageW) / 2.0;
+        final y = cellY + (usableImageHeight - imageH) / 2.0;
+        fittedImageRect = Rect.fromLTWH(x, y, imageW, imageH);
       } else {
         // Crop-to-fill
         fittedImageRect = Rect.fromLTWH(cellX, cellY, cellWidth, usableImageHeight);

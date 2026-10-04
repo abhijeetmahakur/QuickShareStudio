@@ -1,0 +1,9 @@
+{
+  "dart.flutterHotReloadOnSave": "all",
+  "dart.flutterHotRestartOnSave": false,
+  "dart.hotReloadProgress": "notification",
+  "dart.openDevTools": "flutter",
+  "dart.previewHotReloadOnSaveWatcher": true,
+  "dart.trackWidgetCreation": true,
+  "editor.formatOnSave": true
+}
