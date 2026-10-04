@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -11,26 +12,49 @@ import '../models/received_item_model.dart';
 import '../../core/utils/hash_utils.dart';
 import '../../core/utils/file_utils.dart';
 import '../../core/constants.dart';
+import 'peer_link.dart';
 import 'transfer_engine.dart';
 
-/// CrossDeviceTransferService coordinates cross-platform file transfers
-/// over local Wi-Fi / LAN networks across Windows, macOS, Linux, Android, iOS, etc.
-class CrossDeviceTransferService extends ChangeNotifier {
+/// Native implementation of the LAN peer protocol (v1), shared with the desktop app's
+/// `scripts/server.py`:
+///
+///   UDP  [AppConstants.discoveryPort]  "QUICKSHARE_DISCOVER_V1" -> JSON device info
+///   HTTP [AppConstants.defaultHttpPort] GET /api/ping, /api/device-info
+///        POST /api/pair      {code,id,name,platform,port} -> {token,...} when the code matches
+///        POST /api/transfer  file body; requires x-sender-id + x-pair-token from pairing
+class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
   static final CrossDeviceTransferService _instance = CrossDeviceTransferService._internal();
   factory CrossDeviceTransferService() => _instance;
 
   CrossDeviceTransferService._internal();
 
+  static const int protocolVersion = 1;
+  static const String discoverMessage = 'QUICKSHARE_DISCOVER_V1';
+  static const int _pairFailureLimit = 8;
+  static const Duration _pairFailureWindow = Duration(minutes: 5);
+
   HttpServer? _server;
+  RawDatagramSocket? _discoverySocket;
   int _activePort = AppConstants.defaultHttpPort;
   String _activeIp = '127.0.0.1';
   bool _isServerRunning = false;
   String? _lastServerError;
 
+  /// Pairing tokens by peer device id (the same token is used in both directions).
+  final Map<String, String> _peerTokens = {};
+  final Map<String, List<DateTime>> _pairFailures = {};
+
   int get activePort => _activePort;
   String get activeIp => _activeIp;
   bool get isServerRunning => _isServerRunning;
   String? get lastServerError => _lastServerError;
+
+  @override
+  bool get isAvailable => _isServerRunning;
+  @override
+  String get localIp => _activeIp;
+  @override
+  int get localPort => _activePort;
 
   /// Returns the current device operating system platform name
   String get currentPlatformName {
@@ -43,7 +67,7 @@ class CrossDeviceTransferService extends ChangeNotifier {
     return 'Universal';
   }
 
-  /// Initialize local network IP and start the HTTP receiving server
+  /// Initialize local network IP, start the receiver and discovery, and attach to the engine.
   Future<void> initialize({int preferredPort = AppConstants.defaultHttpPort}) async {
     if (kIsWeb) {
       _activeIp = '127.0.0.1';
@@ -53,12 +77,11 @@ class CrossDeviceTransferService extends ChangeNotifier {
     }
 
     _activeIp = await detectLocalIpAddress();
-    await startReceiverServer(preferredPort: preferredPort);
-
-    // Sync IP and port with TransferEngine
-    final engine = TransferEngine();
-    engine.localIp = _activeIp;
-    engine.localPort = _activePort;
+    final started = await startReceiverServer(preferredPort: preferredPort);
+    if (started) {
+      await _startDiscoveryResponder();
+      TransferEngine().attachPeerLink(this);
+    }
     notifyListeners();
   }
 
@@ -103,11 +126,7 @@ class CrossDeviceTransferService extends ChangeNotifier {
 
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        _server = await HttpServer.bind(
-          InternetAddress.anyIPv4,
-          port,
-          shared: true,
-        );
+        _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
 
         _activePort = port;
         _isServerRunning = true;
@@ -129,14 +148,63 @@ class CrossDeviceTransferService extends ChangeNotifier {
     return false;
   }
 
-  /// Closes the HTTP receiver server
+  /// Closes the HTTP receiver server and discovery responder
   Future<void> stopReceiverServer() async {
+    _discoverySocket?.close();
+    _discoverySocket = null;
     if (_server != null) {
       await _server!.close(force: true);
       _server = null;
       _isServerRunning = false;
       notifyListeners();
     }
+  }
+
+  Map<String, Object?> _deviceInfo() {
+    final engine = TransferEngine();
+    return {
+      'id': engine.localDeviceId,
+      'name': engine.localDeviceName,
+      'platform': currentPlatformName,
+      'ip': _activeIp,
+      'port': _activePort,
+      'protocol': protocolVersion,
+      'readyToReceive': !engine.isReceivingPaused,
+    };
+  }
+
+  // The engine owns the pairing code; the native server reads it directly.
+  @override
+  void updateSession({required String? code, required String deviceId, required String deviceName}) {}
+
+  Future<void> _startDiscoveryResponder() async {
+    try {
+      final socket = await RawDatagramSocket.bind(
+        InternetAddress.anyIPv4,
+        AppConstants.discoveryPort,
+        reuseAddress: true,
+      );
+      _discoverySocket = socket;
+      socket.listen((event) {
+        if (event != RawSocketEvent.read) return;
+        final datagram = socket.receive();
+        if (datagram == null) return;
+        if (utf8.decode(datagram.data, allowMalformed: true).trim() == discoverMessage) {
+          socket.send(utf8.encode(jsonEncode(_deviceInfo())), datagram.address, datagram.port);
+        }
+      });
+    } catch (e) {
+      // Without discovery, pairing still works through the QR code (direct IP + port).
+      debugPrint('Discovery responder unavailable: $e');
+    }
+  }
+
+  Future<void> _writeJson(HttpRequest request, int status, Object body) async {
+    request.response
+      ..statusCode = status
+      ..headers.contentType = ContentType.json
+      ..write(jsonEncode(body));
+    await request.response.close();
   }
 
   /// Request listener for receiver HTTP server
@@ -146,68 +214,17 @@ class CrossDeviceTransferService extends ChangeNotifier {
         final path = request.uri.path;
         final engine = TransferEngine();
 
-        // Enable CORS for cross-device requests
-        request.response.headers.add('Access-Control-Allow-Origin', '*');
-        request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        request.response.headers.add('Access-Control-Allow-Headers', '*');
-
-        if (request.method == 'OPTIONS') {
-          request.response.statusCode = HttpStatus.ok;
-          await request.response.close();
-          return;
-        }
-
         try {
           if (path == '/api/device-info' && request.method == 'GET') {
-            // Return device identity & platform
-            final json = jsonEncode({
-              'id': engine.localDeviceId,
-              'name': engine.localDeviceName,
-              'platform': currentPlatformName,
-              'ip': _activeIp,
-              'port': _activePort,
-              'readyToReceive': !engine.isReceivingPaused,
-            });
-            request.response
-              ..statusCode = HttpStatus.ok
-              ..headers.contentType = ContentType.json
-              ..write(json);
-            await request.response.close();
+            await _writeJson(request, HttpStatus.ok, _deviceInfo());
           } else if (path == '/api/pair' && request.method == 'POST') {
-            // Handshake pairing
-            final content = await utf8.decodeStream(request);
-            final data = jsonDecode(content) as Map<String, dynamic>;
-
-            final remoteDevice = DeviceModel(
-              id: data['id'] as String?,
-              name: data['name'] as String? ?? 'Remote Device',
-              ip: data['ip'] as String? ?? request.connectionInfo?.remoteAddress.address ?? _activeIp,
-              port: (data['port'] as num?)?.toInt() ?? AppConstants.defaultHttpPort,
-              deviceType: _parseDeviceType(data['platform'] as String?),
-              platform: data['platform'] as String?,
-              isTrusted: true,
-              isOnline: true,
-            );
-
-            engine.addPairedDevice(remoteDevice);
-
-            request.response
-              ..statusCode = HttpStatus.ok
-              ..headers.contentType = ContentType.json
-              ..write(jsonEncode({'status': 'paired', 'localDeviceName': engine.localDeviceName}));
-            await request.response.close();
+            await _handlePairRequest(request, engine);
           } else if (path == '/api/transfer' && request.method == 'POST') {
-            // Inbound cross-device file transfer
             await _handleInboundTransfer(request, engine);
           } else if (path == '/api/ping' && request.method == 'GET') {
-            request.response
-              ..statusCode = HttpStatus.ok
-              ..headers.contentType = ContentType.json
-              ..write(jsonEncode({'status': 'ok'}));
-            await request.response.close();
+            await _writeJson(request, HttpStatus.ok, {'status': 'ok'});
           } else {
-            request.response.statusCode = HttpStatus.notFound;
-            await request.response.close();
+            await _writeJson(request, HttpStatus.notFound, {'error': 'not found'});
           }
         } catch (e) {
           debugPrint('Error handling request $path: $e');
@@ -223,8 +240,64 @@ class CrossDeviceTransferService extends ChangeNotifier {
     );
   }
 
-  /// Inbound file reception handler
+  /// Pairing: only a device that knows the code currently shown here gets a token.
+  Future<void> _handlePairRequest(HttpRequest request, TransferEngine engine) async {
+    final remoteIp = request.connectionInfo?.remoteAddress.address ?? '0.0.0.0';
+    final now = DateTime.now();
+    final failures = (_pairFailures[remoteIp] ?? [])
+        .where((t) => now.difference(t) < _pairFailureWindow)
+        .toList();
+    _pairFailures[remoteIp] = failures;
+    if (failures.length >= _pairFailureLimit) {
+      await _writeJson(request, HttpStatus.tooManyRequests, {'error': 'too many wrong codes, try again later'});
+      return;
+    }
+
+    final Map<String, dynamic> data;
+    try {
+      data = jsonDecode(await utf8.decodeStream(request)) as Map<String, dynamic>;
+    } catch (_) {
+      await _writeJson(request, HttpStatus.badRequest, {'error': 'bad request'});
+      return;
+    }
+
+    final code = (data['code']?.toString() ?? '').replaceAll(RegExp(r'\D'), '');
+    final session = engine.currentPairingSession;
+    if (session == null || !session.isActive || code.isEmpty || code != session.numericCode) {
+      failures.add(now);
+      await _writeJson(request, HttpStatus.forbidden, {'error': 'wrong or expired code'});
+      return;
+    }
+
+    final token = _newToken();
+    final platform = data['platform'] as String?;
+    final remoteDevice = DeviceModel(
+      id: data['id'] as String?,
+      name: data['name'] as String? ?? 'Remote Device',
+      ip: remoteIp, // the address the request actually came from
+      port: (data['port'] as num?)?.toInt() ?? AppConstants.defaultHttpPort,
+      deviceType: _parseDeviceType(platform),
+      platform: platform,
+      isTrusted: true,
+      isOnline: true,
+    );
+    _peerTokens[remoteDevice.id] = token;
+    engine.addPairedDevice(remoteDevice);
+
+    await _writeJson(request, HttpStatus.ok, {..._deviceInfo(), 'status': 'paired', 'token': token});
+  }
+
+  /// Inbound file reception handler: only paired devices may send.
   Future<void> _handleInboundTransfer(HttpRequest request, TransferEngine engine) async {
+    final senderId = request.headers.value('x-sender-id') ?? '';
+    final token = request.headers.value('x-pair-token') ?? '';
+    final expectedToken = _peerTokens[senderId];
+    if (expectedToken == null || token.isEmpty || token != expectedToken) {
+      await request.drain<void>();
+      await _writeJson(request, HttpStatus.unauthorized, {'error': 'not paired with this device'});
+      return;
+    }
+
     final rawFileName = request.headers.value('x-file-name') ?? 'Received_File';
     final fileName = Uri.decodeComponent(rawFileName);
     final rawSender = request.headers.value('x-sender-name') ?? 'Remote Device';
@@ -242,18 +315,13 @@ class CrossDeviceTransferService extends ChangeNotifier {
     // Verify SHA-256 integrity
     final calculatedSha256 = HashUtils.computeSha256(fileBytes);
     if (expectedSha256 != null && expectedSha256.isNotEmpty && calculatedSha256 != expectedSha256) {
-      request.response
-        ..statusCode = HttpStatus.badRequest
-        ..headers.contentType = ContentType.json
-        ..write(jsonEncode({
-          'status': 'error',
-          'message': 'Checksum mismatch: expected $expectedSha256, got $calculatedSha256',
-        }));
-      await request.response.close();
+      await _writeJson(request, HttpStatus.badRequest, {
+        'status': 'error',
+        'message': 'Checksum mismatch: expected $expectedSha256, got $calculatedSha256',
+      });
       return;
     }
 
-    // Pass received bytes to TransferEngine
     engine.receiveIncomingTransfer(
       senderDeviceName: '$senderName ($senderPlatform)',
       fileName: fileName,
@@ -267,30 +335,17 @@ class CrossDeviceTransferService extends ChangeNotifier {
       recordInHistory: true,
     );
 
-    // Ensure sender is in pairedDevices with its platform
-    final remoteIp = request.connectionInfo?.remoteAddress.address ?? '127.0.0.1';
-    engine.addPairedDevice(
-      DeviceModel(
-        name: senderName,
-        ip: remoteIp,
-        port: AppConstants.defaultHttpPort,
-        platform: senderPlatform,
-        deviceType: _parseDeviceType(senderPlatform),
-        isTrusted: true,
-        isOnline: true,
-      ),
-    );
+    await _writeJson(request, HttpStatus.ok, {
+      'status': 'success',
+      'fileName': fileName,
+      'bytesReceived': fileBytes.length,
+      'sha256': calculatedSha256,
+    });
+  }
 
-    request.response
-      ..statusCode = HttpStatus.ok
-      ..headers.contentType = ContentType.json
-      ..write(jsonEncode({
-        'status': 'success',
-        'fileName': fileName,
-        'bytesReceived': fileBytes.length,
-        'sha256': calculatedSha256,
-      }));
-    await request.response.close();
+  String _newToken() {
+    final random = Random.secure();
+    return List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
   }
 
   DeviceType _parseDeviceType(String? platform) {
@@ -303,7 +358,7 @@ class CrossDeviceTransferService extends ChangeNotifier {
   }
 
   // -------------------------------------------------------------
-  // Sender Client Implementation
+  // Client side
   // -------------------------------------------------------------
 
   /// Quickly checks if a remote device is listening at [ip]:[port]
@@ -317,7 +372,7 @@ class CrossDeviceTransferService extends ChangeNotifier {
     }
   }
 
-  /// Tests connectivity with a remote device at [ip]:[port]
+  /// Tests connectivity with a remote device at [ip]:[port] (does not pair).
   Future<DeviceModel?> probeRemoteDevice(String ip, int port) async {
     try {
       final url = Uri.parse('http://$ip:$port/api/device-info');
@@ -342,40 +397,178 @@ class CrossDeviceTransferService extends ChangeNotifier {
     return null;
   }
 
-  /// Sends a pairing handshake request to a remote device
-  Future<bool> pairWithRemote(String ip, int port) async {
-    final engine = TransferEngine();
-    try {
-      final url = Uri.parse('http://$ip:$port/api/pair');
-      final body = jsonEncode({
-        'id': engine.localDeviceId,
-        'name': engine.localDeviceName,
-        'platform': currentPlatformName,
-        'ip': _activeIp,
-        'port': _activePort,
-      });
+  /// Broadcasts a discovery request and returns the devices that answered.
+  Future<List<Map<String, dynamic>>> discoverDevices({
+    Duration timeout = const Duration(milliseconds: 1500),
+    int? discoveryPort,
+  }) async {
+    final port = discoveryPort ?? AppConstants.discoveryPort;
+    final found = <String, Map<String, dynamic>>{};
+    final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+    socket.broadcastEnabled = true;
+    final ownId = TransferEngine().localDeviceId;
+    final sub = socket.listen((event) {
+      if (event != RawSocketEvent.read) return;
+      final datagram = socket.receive();
+      if (datagram == null) return;
+      try {
+        final info = jsonDecode(utf8.decode(datagram.data)) as Map<String, dynamic>;
+        if (info['id'] == ownId) return;
+        if (!datagram.address.isLoopback) info['ip'] = datagram.address.address;
+        found[info['id'].toString()] = info;
+      } catch (_) {}
+    });
 
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: body,
-      ).timeout(const Duration(seconds: 4));
-
-      if (response.statusCode == 200) {
-        // Probe and add to local pairedDevices
-        final remote = await probeRemoteDevice(ip, port);
-        if (remote != null) {
-          engine.addPairedDevice(remote);
-          return true;
-        }
-      }
-    } catch (e) {
-      debugPrint('Pairing request failed to $ip:$port: $e');
+    final targets = <String>{'255.255.255.255', '127.0.0.1'};
+    final parts = _activeIp.split('.');
+    if (parts.length == 4) targets.add('${parts[0]}.${parts[1]}.${parts[2]}.255');
+    for (final target in targets) {
+      try {
+        socket.send(utf8.encode(discoverMessage), InternetAddress(target), port);
+      } catch (_) {}
     }
-    return false;
+    await Future<void>.delayed(timeout);
+    await sub.cancel();
+    socket.close();
+    return found.values.toList();
   }
 
-  /// Sends a file stream to a cross-platform target device with real-time progress callbacks
+  @override
+  Future<DeviceModel> pairDirect(String host, int port, String code) async {
+    final engine = TransferEngine();
+    final http.Response response;
+    try {
+      response = await http
+          .post(
+            Uri.parse('http://$host:$port/api/pair'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'code': code,
+              'id': engine.localDeviceId,
+              'name': engine.localDeviceName,
+              'platform': currentPlatformName,
+              'port': _activePort,
+            }),
+          )
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      throw PeerLinkException('Could not reach $host:$port. Make sure both devices are on the same Wi-Fi.');
+    }
+    if (response.statusCode == HttpStatus.forbidden) {
+      throw PeerLinkException('That code is wrong or has expired.');
+    }
+    if (response.statusCode == HttpStatus.tooManyRequests) {
+      throw PeerLinkException('Too many wrong codes. Wait a few minutes and try again.');
+    }
+    if (response.statusCode != HttpStatus.ok) {
+      throw PeerLinkException('The device refused pairing (HTTP ${response.statusCode}).');
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final platform = data['platform'] as String?;
+    final device = DeviceModel(
+      id: data['id'] as String?,
+      name: data['name'] as String? ?? 'Remote Device',
+      ip: host,
+      port: (data['port'] as num?)?.toInt() ?? port,
+      platform: platform,
+      deviceType: _parseDeviceType(platform),
+      isTrusted: true,
+      isOnline: true,
+    );
+    _peerTokens[device.id] = data['token'] as String;
+    return device;
+  }
+
+  @override
+  Future<DeviceModel> pairWithCode(String code) async {
+    final devices = await discoverDevices();
+    if (devices.isEmpty) {
+      throw PeerLinkException(
+        'No QuickShare devices answered on this network. Check that both devices are on the '
+        'same Wi-Fi and the app is open, or pair with the QR code instead.',
+      );
+    }
+    final attempts = devices.map((info) async {
+      try {
+        return await pairDirect(
+          info['ip'].toString(),
+          (info['port'] as num?)?.toInt() ?? AppConstants.defaultHttpPort,
+          code,
+        );
+      } catch (_) {
+        return null;
+      }
+    });
+    final results = await Future.wait(attempts);
+    final paired = results.whereType<DeviceModel>();
+    if (paired.isEmpty) {
+      throw PeerLinkException('No device on this network is showing that code. Check the code and try again.');
+    }
+    return paired.first;
+  }
+
+  @override
+  Future<void> unpair(String peerId) async {
+    _peerTokens.remove(peerId);
+  }
+
+  @override
+  Future<void> sendFile(
+    DeviceModel peer,
+    String fileName,
+    Uint8List bytes, {
+    void Function(double progress)? onProgress,
+  }) async {
+    final token = _peerTokens[peer.id];
+    if (token == null) {
+      throw PeerLinkException('"${peer.name}" is not paired with this device. Pair again from Device Pairing.');
+    }
+    final engine = TransferEngine();
+    final request = http.StreamedRequest('POST', Uri.parse('http://${peer.ip}:${peer.port}/api/transfer'))
+      ..headers.addAll({
+        'x-file-name': Uri.encodeComponent(fileName),
+        'x-file-size': bytes.length.toString(),
+        'x-sender-id': engine.localDeviceId,
+        'x-sender-name': Uri.encodeComponent(engine.localDeviceName),
+        'x-sender-platform': currentPlatformName,
+        'x-pair-token': token,
+        'x-sha256': HashUtils.computeSha256(bytes),
+        'Content-Type': 'application/octet-stream',
+      })
+      ..contentLength = bytes.length;
+
+    Future<void> feed() async {
+      const chunkSize = 64 * 1024;
+      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+        final end = min(offset + chunkSize, bytes.length);
+        request.sink.add(bytes.sublist(offset, end));
+        onProgress?.call(end / bytes.length);
+        await Future<void>.delayed(Duration.zero);
+      }
+      await request.sink.close();
+    }
+
+    try {
+      unawaited(feed());
+      final response = await request.send().timeout(Duration(seconds: 30 + bytes.length ~/ (256 * 1024)));
+      final body = await response.stream.bytesToString();
+      if (response.statusCode == HttpStatus.unauthorized) {
+        throw PeerLinkException('"${peer.name}" no longer recognises this device. Pair again.');
+      }
+      if (response.statusCode != HttpStatus.ok) {
+        throw PeerLinkException('"${peer.name}" rejected the file (HTTP ${response.statusCode}): $body');
+      }
+    } on PeerLinkException {
+      rethrow;
+    } catch (_) {
+      throw PeerLinkException(
+        'Could not reach "${peer.name}" at ${peer.ip}:${peer.port}. '
+        'Ensure both devices are on the same Wi-Fi / hotspot network and QuickShare Studio is open.',
+      );
+    }
+  }
+
+  /// Sends a file and tracks it as a transfer in [TransferEngine] (progress + history).
   Future<TransferItem> sendFileCrossPlatform({
     required DeviceModel recipient,
     required String fileName,
@@ -401,7 +594,7 @@ class CrossDeviceTransferService extends ChangeNotifier {
       peerDeviceName: recipient.name,
       peerDeviceId: recipient.id,
       sessionName: sessionName,
-      connectionType: 'Cross-Platform (${recipient.platform ?? "Universal"})',
+      connectionType: 'Local Network (${recipient.platform ?? "Device"})',
       rawBytes: bytes,
       status: TransferStatus.transferring,
     );
@@ -410,114 +603,41 @@ class CrossDeviceTransferService extends ChangeNotifier {
     engine.fileDataStore[sha256Hash] = bytes;
     engine.addActiveTransfer(transfer);
 
-    final targetUrl = Uri.parse('http://${recipient.ip}:${recipient.port}/api/transfer');
+    void update(TransferItem Function(TransferItem t) change) {
+      final idx = engine.activeTransfers.indexWhere((t) => t.transferId == transfer.transferId);
+      if (idx != -1) engine.updateTransfer(change(engine.activeTransfers[idx]));
+    }
 
+    final startTime = DateTime.now();
     try {
-      final request = http.StreamedRequest('POST', targetUrl);
-      request.headers['x-file-name'] = Uri.encodeComponent(sanitized);
-      request.headers['x-file-size'] = bytes.length.toString();
-      request.headers['x-sender-name'] = Uri.encodeComponent(engine.localDeviceName);
-      request.headers['x-sender-platform'] = currentPlatformName;
-      request.headers['x-sha256'] = sha256Hash;
-      request.headers['Content-Type'] = 'application/octet-stream';
-
-      // Stream file bytes with chunked progress updates
-      const chunkSize = 64 * 1024; // 64 KB streaming chunks
-      int transferredBytes = 0;
-      final startTime = DateTime.now();
-
-      final controller = StreamController<List<int>>();
-      request.contentLength = bytes.length;
-
-      // Pipe controller into request
-      request.sink.addStream(controller.stream).then((_) {
-        request.sink.close();
-      });
-
-      // Feed chunks asynchronously
-      Future<void> feedData() async {
-        for (int offset = 0; offset < bytes.length; offset += chunkSize) {
-          final end = (offset + chunkSize < bytes.length) ? offset + chunkSize : bytes.length;
-          final chunk = bytes.sublist(offset, end);
-          controller.add(chunk);
-
-          transferredBytes += chunk.length;
-          final double progress = (transferredBytes / bytes.length).clamp(0.0, 1.0);
-          final elapsed = DateTime.now().difference(startTime).inMilliseconds;
-          final speed = elapsed > 0 ? (transferredBytes / (elapsed / 1000.0)) : 0.0;
-          final int chunkIndex = (transferredBytes / AppConstants.chunkSize).ceil().clamp(0, totalChunks);
-
-          final idx = engine.activeTransfers.indexWhere((t) => t.transferId == transfer.transferId);
-          if (idx != -1) {
-            final updated = engine.activeTransfers[idx].copyWith(
-              transferredChunks: chunkIndex,
+      await sendFile(recipient, sanitized, bytes, onProgress: (progress) {
+        final elapsed = DateTime.now().difference(startTime).inMilliseconds;
+        update((t) => t.copyWith(
+              transferredChunks: (progress * totalChunks).floor(),
               progress: progress,
-              speedBytesPerSec: speed,
-              status: TransferStatus.transferring,
-            );
-            engine.updateTransfer(updated);
-          }
-
-          // Small yield to let UI render progress updates
-          await Future.delayed(const Duration(milliseconds: 15));
-        }
-        await controller.close();
-      }
-
-      feedData();
-
-      // Send request and await receiver response
-      final streamedResponse = await request.send().timeout(const Duration(seconds: 45));
-      final responseBody = await streamedResponse.stream.bytesToString();
-
-      if (streamedResponse.statusCode == 200) {
-        // Successful transfer
-        final idx = engine.activeTransfers.indexWhere((t) => t.transferId == transfer.transferId);
-        if (idx != -1) {
-          final completed = engine.activeTransfers[idx].copyWith(
+              speedBytesPerSec: elapsed > 0 ? bytes.length * progress / (elapsed / 1000) : 0,
+            ));
+      });
+      update((t) => t.copyWith(
             transferredChunks: totalChunks,
             progress: 1.0,
             status: TransferStatus.completed,
             completedTime: DateTime.now(),
-          );
-          engine.updateTransfer(completed);
-
-          // Record in Transfer History
-          final record = HistoryRecord(
-            fileName: completed.fileName,
-            fileSize: completed.fileSizeBytes,
-            senderName: engine.localDeviceName,
-            recipientName: '${recipient.name} (${recipient.platform ?? "Peer"})',
-            isIncoming: false,
-            status: 'completed',
-            sha256: completed.sha256,
-            sessionName: completed.sessionName,
-            connectionType: completed.connectionType,
-          );
-          engine.addHistoryRecord(record);
-        }
-        return transfer;
-      } else {
-        throw HttpException('Receiver returned status code ${streamedResponse.statusCode}: $responseBody');
-      }
-    } catch (e) {
-      debugPrint('Cross-device transfer failed: $e');
-      final idx = engine.activeTransfers.indexWhere((t) => t.transferId == transfer.transferId);
-      if (idx != -1) {
-        String friendlyError = e.toString();
-        if (e is SocketException) {
-          friendlyError = 'Could not reach "${recipient.name}" at ${recipient.ip}:${recipient.port}. '
-              'Ensure both devices are on the same Wi-Fi / hotspot network and QuickShare Studio is open.';
-        } else if (e is TimeoutException) {
-          friendlyError = 'Transfer timed out while connecting to ${recipient.ip}:${recipient.port}.';
-        }
-
-        final failed = engine.activeTransfers[idx].copyWith(
-          status: TransferStatus.failed,
-          errorMessage: friendlyError,
-        );
-        engine.updateTransfer(failed);
-      }
+          ));
+      engine.addHistoryRecord(HistoryRecord(
+        fileName: sanitized,
+        fileSize: bytes.length,
+        senderName: engine.localDeviceName,
+        recipientName: '${recipient.name} (${recipient.platform ?? "Peer"})',
+        isIncoming: false,
+        status: 'completed',
+        sha256: sha256Hash,
+        sessionName: sessionName,
+        connectionType: transfer.connectionType,
+      ));
+      return transfer;
+    } on PeerLinkException catch (e) {
+      update((t) => t.copyWith(status: TransferStatus.failed, errorMessage: e.message));
       rethrow;
     }
   }

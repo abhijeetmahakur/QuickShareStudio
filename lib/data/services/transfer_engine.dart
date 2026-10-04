@@ -18,7 +18,7 @@ import '../models/incoming_transfer_request.dart';
 import '../../core/utils/hash_utils.dart';
 import '../../core/utils/file_utils.dart';
 import '../../core/constants.dart';
-import 'cross_device_transfer_service.dart';
+import 'peer_link.dart';
 
 class TransferEngine extends ChangeNotifier {
   static final TransferEngine _instance = TransferEngine._internal();
@@ -95,6 +95,50 @@ class TransferEngine extends ChangeNotifier {
 
   // Security mode
   bool isPrivateMode = false;
+
+  // -------------------------------------------------------------
+  // Real networking (LAN peer protocol). Without a link the engine runs in demo mode.
+  // -------------------------------------------------------------
+  PeerLink? peerLink;
+
+  /// Human-readable reason the last pairing attempt failed (shown on the pairing screen).
+  String? lastPairingError;
+
+  bool get hasRealNetwork => peerLink?.isAvailable ?? false;
+
+  void attachPeerLink(PeerLink link) {
+    peerLink = link;
+    localIp = link.localIp;
+    localPort = link.localPort;
+    // New code + QR so they carry the real address other devices must use.
+    _refreshPairingSession();
+  }
+
+  void _syncPeerSession() {
+    final session = currentPairingSession;
+    peerLink?.updateSession(
+      code: session != null && session.isActive ? session.numericCode : null,
+      deviceId: localDeviceId,
+      deviceName: localDeviceName,
+    );
+  }
+
+  /// Completes when [transferId] finishes; true if it completed successfully.
+  Future<bool> waitForTransfer(String transferId) async {
+    while (true) {
+      final match = activeTransfers.where((t) => t.transferId == transferId);
+      if (match.isEmpty) return false;
+      switch (match.first.status) {
+        case TransferStatus.completed:
+          return true;
+        case TransferStatus.failed:
+        case TransferStatus.cancelled:
+          return false;
+        default:
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    }
+  }
 
   void _initDevice() {
     localDeviceId = 'dev_${Random().nextInt(999999)}';
@@ -189,6 +233,8 @@ class TransferEngine extends ChangeNotifier {
       );
     }
 
+    _syncPeerSession();
+
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('custom_device_name', localDeviceName);
@@ -261,6 +307,7 @@ class TransferEngine extends ChangeNotifier {
       hostIp: localIp,
       hostPort: localPort,
     );
+    _syncPeerSession();
     notifyListeners();
   }
 
@@ -291,7 +338,20 @@ class TransferEngine extends ChangeNotifier {
       return false;
     }
 
-    // Simulate network authentication handshake
+    final link = peerLink;
+    if (link != null && link.isAvailable) {
+      try {
+        final device = await link.pairWithCode(cleanCode);
+        lastPairingError = null;
+        addPairedDevice(device);
+        return true;
+      } on PeerLinkException catch (e) {
+        lastPairingError = e.message;
+        return false;
+      }
+    }
+
+    // Demo mode (no network service): simulate the handshake.
     await Future.delayed(const Duration(milliseconds: 300));
 
     final resolvedPlatform = platform ?? (cleanCode.startsWith('9') ? 'iOS' : cleanCode.startsWith('8') ? 'macOS' : cleanCode.startsWith('7') ? 'Windows' : 'Android');
@@ -350,6 +410,20 @@ class TransferEngine extends ChangeNotifier {
 
       final host = uri.queryParameters['host'] ?? '127.0.0.1';
       final port = int.tryParse(uri.queryParameters['port'] ?? '8088') ?? 8088;
+
+      final link = peerLink;
+      if (link != null && link.isAvailable) {
+        try {
+          final device = await link.pairDirect(host, port, code);
+          lastPairingError = null;
+          addPairedDevice(device);
+          return true;
+        } on PeerLinkException catch (e) {
+          lastPairingError = e.message;
+          return false;
+        }
+      }
+
       final name = Uri.decodeComponent(uri.queryParameters['name'] ?? 'Remote Device');
       final lowerName = name.toLowerCase();
       final platform = uri.queryParameters['platform'] ??
@@ -412,12 +486,16 @@ class TransferEngine extends ChangeNotifier {
   }
 
   void disconnectAllDevices() {
+    for (final d in pairedDevices) {
+      peerLink?.unpair(d.id);
+    }
     pairedDevices.clear();
     currentPairingSession?.invalidate();
     notifyListeners();
   }
 
   void removePairedDevice(String deviceId) {
+    peerLink?.unpair(deviceId);
     pairedDevices.removeWhere((d) => d.id == deviceId);
     notifyListeners();
   }
@@ -615,18 +693,19 @@ class TransferEngine extends ChangeNotifier {
     fileDataStore[sanitized] = bytes;
     fileDataStore[sha256Hash] = bytes;
 
-    // If cross-device server is running and recipient is reachable over HTTP, stream live cross-platform transfer
-    final crossService = CrossDeviceTransferService();
-    if (crossService.isServerRunning && recipient.port > 0) {
-      final isReachable = await crossService.isDeviceReachable(recipient.ip, recipient.port);
-      if (isReachable) {
-        return crossService.sendFileCrossPlatform(
-          recipient: recipient,
-          fileName: sanitized,
-          bytes: bytes,
-          sessionName: sessionName,
-        );
-      }
+    final link = peerLink;
+    if (link != null && link.isAvailable) {
+      return _sendOverNetwork(
+        link: link,
+        recipient: recipient,
+        fileName: sanitized,
+        bytes: bytes,
+        sha256Hash: sha256Hash,
+        totalChunks: totalChunks,
+        sessionName: sessionName,
+        pageCount: pageCount,
+        connectionType: 'Local Network (${recipient.platform ?? "Device"})',
+      );
     }
 
     final transfer = TransferItem(
@@ -726,6 +805,91 @@ class TransferEngine extends ChangeNotifier {
     });
 
     _transferTimers.add(timer);
+  }
+
+  /// Real transfer: returns the tracked item immediately and updates it as the send progresses.
+  TransferItem _sendOverNetwork({
+    required PeerLink link,
+    required DeviceModel recipient,
+    required String fileName,
+    required Uint8List bytes,
+    required String sha256Hash,
+    required int totalChunks,
+    String? sessionName,
+    int? pageCount,
+    required String connectionType,
+  }) {
+    final transfer = TransferItem(
+      fileName: fileName,
+      fileSizeBytes: bytes.length,
+      fileType: FileUtils.isPdfFilename(fileName)
+          ? TransferFileType.pdf
+          : FileUtils.isImageFilename(fileName)
+              ? TransferFileType.image
+              : TransferFileType.other,
+      sha256: sha256Hash,
+      totalChunks: totalChunks,
+      isSender: true,
+      peerDeviceName: recipient.name,
+      peerDeviceId: recipient.id,
+      sessionName: sessionName,
+      pageCount: pageCount,
+      connectionType: connectionType,
+      rawBytes: bytes,
+      status: TransferStatus.transferring,
+    );
+    activeTransfers.insert(0, transfer);
+    notifyListeners();
+
+    void update(TransferItem Function(TransferItem t) change) {
+      final idx = activeTransfers.indexWhere((t) => t.transferId == transfer.transferId);
+      if (idx == -1) return;
+      activeTransfers[idx] = change(activeTransfers[idx]);
+      notifyListeners();
+    }
+
+    final startTime = DateTime.now();
+    link.sendFile(recipient, fileName, bytes, onProgress: (progress) {
+      final elapsed = DateTime.now().difference(startTime).inMilliseconds;
+      update((t) => t.copyWith(
+            progress: progress,
+            transferredChunks: (progress * totalChunks).floor(),
+            speedBytesPerSec: elapsed > 0 ? bytes.length * progress / (elapsed / 1000) : 0,
+          ));
+    }).then((_) {
+      update((t) => t.copyWith(
+            progress: 1.0,
+            transferredChunks: totalChunks,
+            status: TransferStatus.completed,
+            completedTime: DateTime.now(),
+          ));
+      addHistoryRecord(HistoryRecord(
+        fileName: fileName,
+        fileSize: bytes.length,
+        senderName: localDeviceName,
+        recipientName: recipient.name,
+        isIncoming: false,
+        status: 'completed',
+        sha256: sha256Hash,
+        sessionName: sessionName,
+        pageCount: pageCount,
+        connectionType: connectionType,
+      ));
+    }).catchError((Object e) {
+      update((t) => t.copyWith(status: TransferStatus.failed, errorMessage: e.toString()));
+      addHistoryRecord(HistoryRecord(
+        fileName: fileName,
+        fileSize: bytes.length,
+        senderName: localDeviceName,
+        recipientName: recipient.name,
+        isIncoming: false,
+        status: 'failed',
+        sha256: sha256Hash,
+        sessionName: sessionName,
+        connectionType: connectionType,
+      ));
+    });
+    return transfer;
   }
 
   void cancelTransfer(String transferId) {
@@ -874,12 +1038,13 @@ class TransferEngine extends ChangeNotifier {
     String? textContent,
     bool isFromTrustedDevice = true,
     bool recordInHistory = true,
+    String? savedPath,
   }) {
     if (isReceivingPaused) return;
 
     final sanitized = FileUtils.sanitizeFilename(fileName);
     final sha256Hash = HashUtils.computeSha256(bytes);
-    final savedPath = FileUtils.joinPath(downloadDirectory, sanitized);
+    savedPath ??= FileUtils.joinPath(downloadDirectory, sanitized);
 
     // Cache bytes for view / download
     fileDataStore[sanitized] = bytes;

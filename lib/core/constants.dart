@@ -118,6 +118,8 @@ class AppConstants {
 
   // Network & Pairing Defaults
   static const int defaultHttpPort = 8088;
+  // UDP port for "who is on this Wi-Fi?" discovery (LAN peer protocol v1).
+  static const int discoveryPort = 8089;
   static const int defaultWsPort = 8089;
   static const int pairingCodeExpirationMinutes = 5;
   static const int chunkSize = 512 * 1024; // 512 KB chunks
