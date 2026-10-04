@@ -66,6 +66,16 @@ class _NearbyDevicesScreenState extends State<NearbyDevicesScreen> with WidgetsB
   String? _connectingTo;
   bool _requesting = false;
 
+  /// Steps whose system prompt was already shown on this visit: a "denied" answer then
+  /// means "explain and offer Try again", not "show the rationale again".
+  final Set<String> _asked = {};
+
+  /// Denials per step on this visit. Android 11+ stops showing the dialog after the second
+  /// one, while permission_handler may still report a plain "denied" for some permission
+  /// groups (seen with the Bluetooth trio on Android 14), so the second denial is treated
+  /// as "don't ask again".
+  final Map<String, int> _denials = {};
+
   NearbyEnvironment get env => widget.environment;
 
   @override
@@ -92,7 +102,8 @@ class _NearbyDevicesScreenState extends State<NearbyDevicesScreen> with WidgetsB
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Back from Settings / the Bluetooth prompt: check again.
-    if (state == AppLifecycleState.resumed && _gate != _Gate.ready) _evaluate();
+    // The system permission dialog itself pauses/resumes the activity; don't race it.
+    if (state == AppLifecycleState.resumed && _gate != _Gate.ready && !_requesting) _evaluate();
   }
 
   Future<void> _evaluate() async {
@@ -127,7 +138,7 @@ class _NearbyDevicesScreenState extends State<NearbyDevicesScreen> with WidgetsB
       if (!mounted) return;
       setState(() {
         _step = step;
-        _gate = s == PermissionState.permanentlyDenied ? _Gate.permanentlyDenied : _Gate.rationale;
+        _gate = _gateFor(step, s);
       });
       return;
     }
@@ -155,10 +166,19 @@ class _NearbyDevicesScreenState extends State<NearbyDevicesScreen> with WidgetsB
     }
   }
 
+  /// One verdict for a not-granted step, whether it comes from a request or from the
+  /// re-check when the app resumes (Android's permission activity pauses/resumes the app
+  /// after the request returns, so both paths must agree).
+  _Gate _gateFor(PermissionStep step, PermissionState state) {
+    if (state == PermissionState.permanentlyDenied || (_denials[step.id] ?? 0) >= 2) return _Gate.permanentlyDenied;
+    return _asked.contains(step.id) ? _Gate.denied : _Gate.rationale;
+  }
+
   Future<void> _requestStep() async {
     final step = _step;
     if (step == null || _requesting) return;
     setState(() => _requesting = true);
+    _asked.add(step.id);
     final result = await env.request(step);
     if (!mounted) return;
     setState(() => _requesting = false);
@@ -166,7 +186,8 @@ class _NearbyDevicesScreenState extends State<NearbyDevicesScreen> with WidgetsB
       _step = null;
       await _evaluate();
     } else {
-      setState(() => _gate = result == PermissionState.permanentlyDenied ? _Gate.permanentlyDenied : _Gate.denied);
+      _denials[step.id] = (_denials[step.id] ?? 0) + 1;
+      setState(() => _gate = _gateFor(step, result));
     }
   }
 
@@ -270,6 +291,7 @@ class _NearbyDevicesScreenState extends State<NearbyDevicesScreen> with WidgetsB
           title: 'Permission needed',
           body: '${_step!.rationale}\n\nWithout it, QuickShare can’t use Bluetooth transfers. You can still use the same Wi-Fi or the internet.',
           primary: ('Try again', _requestStep),
+          secondary: ('Open app settings', () => env.openSettings()),
         );
       case _Gate.permanentlyDenied:
         return _card(
@@ -438,7 +460,13 @@ class _NearbyDevicesScreenState extends State<NearbyDevicesScreen> with WidgetsB
     );
   }
 
-  Widget _card({required IconData icon, required String title, required String body, (String, VoidCallback?)? primary}) {
+  Widget _card({
+    required IconData icon,
+    required String title,
+    required String body,
+    (String, VoidCallback?)? primary,
+    (String, VoidCallback?)? secondary,
+  }) {
     return Container(
       padding: const EdgeInsets.all(Space.xl),
       decoration: cardDecoration(),
@@ -461,6 +489,20 @@ class _NearbyDevicesScreenState extends State<NearbyDevicesScreen> with WidgetsB
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.control)),
               ),
               child: Text(primary.$1, style: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ],
+        if (secondary != null) ...[
+          const SizedBox(height: Space.s),
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: secondary.$2,
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.primaryText,
+                minimumSize: const Size.fromHeight(minTapTarget),
+              ),
+              child: Text(secondary.$1, style: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600)),
             ),
           ),
         ],

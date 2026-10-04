@@ -175,6 +175,37 @@ void main() {
       expect(find.text('Allow nearby Wi-Fi devices'), findsOneWidget);
     });
 
+    testWidgets('denied stays denied when the app resumes after the system dialog', (tester) async {
+      final env = FakeNearby(caps: _caps(), answers: {'bluetooth': [PermissionState.denied]});
+      await tester.pumpWidget(_app(NearbyDevicesScreen(environment: env)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      // Closing the system dialog resumes the activity (found on a real Android 14 device).
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.text('Permission needed'), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+    });
+
+    testWidgets('a second denial leads to Settings (Android stops asking after two)', (tester) async {
+      final env = FakeNearby(caps: _caps(), answers: {'bluetooth': [PermissionState.denied, PermissionState.denied]});
+      await tester.pumpWidget(_app(NearbyDevicesScreen(environment: env)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.text('Open app settings'), findsOneWidget, reason: 'never a dead end');
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.text('Turn on the permission in Settings'), findsOneWidget);
+      // Android's (invisible) permission activity resumes the app afterwards: the verdict holds.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.text('Turn on the permission in Settings'), findsOneWidget);
+    });
+
     testWidgets('"never ask again" -> Open app settings', (tester) async {
       final env = FakeNearby(caps: _caps(), answers: {'bluetooth': [PermissionState.permanentlyDenied]});
       await tester.pumpWidget(_app(NearbyDevicesScreen(environment: env)));
