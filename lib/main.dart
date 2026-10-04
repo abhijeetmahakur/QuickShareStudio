@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'features/connect/widgets/incoming_offer_host.dart';
+import 'transfer/connection_manager.dart';
+import 'transfer/transfer_settings.dart';
 import 'data/services/transfer_engine.dart';
 import 'data/services/app_update_service.dart';
 import 'data/services/cross_device_transfer_service.dart';
@@ -16,13 +19,13 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Real device-to-device networking: native builds run their own LAN server; the
   // browser-based desktop app goes through the local launcher server (server.py).
-  if (kIsWeb) {
-    BridgePeerLink.connect().then((link) {
-      if (link != null) TransferEngine().attachPeerLink(link);
-    });
-  } else {
-    CrossDeviceTransferService().initialize();
-  }
+  // Internet (PeerJS/WebRTC) and Bluetooth are handled by the ConnectionManager.
+  final lanReady = kIsWeb
+      ? BridgePeerLink.connect().then((link) {
+          if (link != null) TransferEngine().attachPeerLink(link);
+        })
+      : CrossDeviceTransferService().initialize();
+  lanReady.whenComplete(() => ConnectionManager.instance.start());
   runApp(
     MultiProvider(
       providers: [
@@ -30,6 +33,8 @@ void main() async {
         ChangeNotifierProvider(create: (_) => AppUpdateService()),
         ChangeNotifierProvider(create: (_) => CrossDeviceTransferService()),
         ChangeNotifierProvider(create: (_) => ThemeService()),
+        ChangeNotifierProvider.value(value: ConnectionManager.instance),
+        ChangeNotifierProvider.value(value: TransferSettings.instance),
       ],
       child: const QuickShareApp(),
     ),
@@ -136,6 +141,8 @@ class _QuickShareAppState extends State<QuickShareApp> {
       themeMode: currentThemeMode,
       // Instant switch: an animated lerp would mix old and new palettes mid-transition.
       themeAnimationDuration: Duration.zero,
+      // Incoming files ask for Accept / Decline on top of any screen.
+      builder: (context, child) => IncomingOfferHost(child: child ?? const SizedBox.shrink()),
       home: effectiveHome,
     );
   }
