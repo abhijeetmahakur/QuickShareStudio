@@ -427,7 +427,7 @@ class _PairingViewState extends State<PairingView> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Pair QuickShare Studio with nearby devices using either a temporary QR code or a six-digit code. Codes are strictly session-bound and expire when the app closes or is regenerated.',
+                  'Connect another device with a QR code or a six-digit code: on the same Wi-Fi, over the internet, or nearby over Bluetooth. Codes work once and expire after 5 minutes.',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 12.5,

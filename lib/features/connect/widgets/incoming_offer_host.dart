@@ -82,6 +82,8 @@ class AcceptOfferCard extends StatelessWidget {
                 constraints: const BoxConstraints(maxHeight: 180),
                 child: ListView(
                   shrinkWrap: true,
+                  // No inherited safe-area padding: it showed as a gap above the list.
+                  padding: EdgeInsets.zero,
                   children: [
                     for (final f in files)
                       Padding(

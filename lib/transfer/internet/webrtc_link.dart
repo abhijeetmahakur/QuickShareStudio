@@ -231,21 +231,27 @@ class _CandidateBuffer {
   }
 }
 
+/// The path is relayed if either end of the selected pair is a TURN relay (only one side may
+/// need one).
+bool _pairUsesRelay(Map<String, StatsReport> byId, StatsReport? pair) {
+  if (pair == null) return false;
+  final local = byId[pair.values['localCandidateId']];
+  final remote = byId[pair.values['remoteCandidateId']];
+  return local?.values['candidateType'] == 'relay' || remote?.values['candidateType'] == 'relay';
+}
+
 Future<bool> _isRelayed(RTCPeerConnection pc) async {
   try {
     final stats = await pc.getStats();
     final byId = {for (final r in stats) r.id: r};
     for (final r in stats) {
       if (r.type == 'transport' && r.values['selectedCandidatePairId'] != null) {
-        final pair = byId[r.values['selectedCandidatePairId']];
-        final local = byId[pair?.values['localCandidateId']];
-        return local?.values['candidateType'] == 'relay';
+        return _pairUsesRelay(byId, byId[r.values['selectedCandidatePairId']]);
       }
     }
     for (final r in stats) {
       if (r.type == 'candidate-pair' && (r.values['nominated'] == true || r.values['selected'] == true) && r.values['state'] == 'succeeded') {
-        final local = byId[r.values['localCandidateId']];
-        return local?.values['candidateType'] == 'relay';
+        return _pairUsesRelay(byId, r);
       }
     }
   } catch (_) {}
