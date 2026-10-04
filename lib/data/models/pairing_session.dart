@@ -1,19 +1,13 @@
+import 'dart:convert';
 import 'dart:math';
 
-/// Represents an active device pairing session.
-/// The pairing code remains active while the sender's application session is open.
-/// It is invalidated automatically on disconnect, end session, or app close.
+/// The code this device shows so another device can connect to it (on the LAN, or over the
+/// internet as PeerJS peer `qs-<code>`).
+///
+/// Credentials are temporary: the code, its one-time nonce and the peer ID die when the code
+/// expires ([ttl], 5 minutes by default), is used, is regenerated, or after too many failed
+/// handshakes. A code is never handed out twice in the same app run.
 class PairingSession {
-  final String sessionId;
-  final String numericCode; // 6-digit code
-  final String hostDeviceName;
-  final String hostIp;
-  final int hostPort;
-  final DateTime createdAt;
-  bool isActive;
-  final bool isApproved;
-  final int failedAttempts;
-
   PairingSession({
     required this.sessionId,
     required this.numericCode,
@@ -21,22 +15,52 @@ class PairingSession {
     required this.hostIp,
     required this.hostPort,
     required this.createdAt,
+    String? nonce,
+    this.ttl = const Duration(minutes: 5),
     this.isActive = true,
     this.isApproved = false,
     this.failedAttempts = 0,
-  });
+    this.maxFailedAttempts = 5,
+  }) : nonce = nonce ?? _randomNonce();
 
-  /// Generates a fresh session-bound pairing code
+  final String sessionId;
+  final String numericCode; // 6-digit code
+  final String hostDeviceName;
+  final String hostIp;
+  final int hostPort;
+  final DateTime createdAt;
+
+  /// One-time secret carried only in the QR code (never typed, never on a server).
+  final String nonce;
+  final Duration ttl;
+  bool isActive;
+  final bool isApproved;
+  int failedAttempts;
+  final int maxFailedAttempts;
+
+  static final Random _secure = Random.secure();
+
+  /// Codes handed out in this run, so none is reused.
+  static final Set<String> _issued = {};
+
+  static String _randomNonce() => base64Url.encode(List<int>.generate(16, (_) => _secure.nextInt(256))).replaceAll('=', '');
+
+  /// Generates a fresh code with a cryptographically secure RNG.
   factory PairingSession.create({
     required String hostDeviceName,
     required String hostIp,
     required int hostPort,
+    Duration ttl = const Duration(minutes: 5),
+    int maxFailedAttempts = 5,
+    DateTime? now,
   }) {
-    final rand = Random();
-    // 6-digit cryptographically styled numeric code: 100000 - 999999
-    final code = (100000 + rand.nextInt(900000)).toString();
-    final now = DateTime.now();
-    final sessionId = 'pair_${now.microsecondsSinceEpoch}_${rand.nextInt(1000000)}';
+    String code;
+    do {
+      code = (100000 + _secure.nextInt(900000)).toString();
+    } while (_issued.contains(code));
+    _issued.add(code);
+    final created = now ?? DateTime.now();
+    final sessionId = 'pair_${created.microsecondsSinceEpoch}_${_randomNonce().substring(0, 8)}';
 
     return PairingSession(
       sessionId: sessionId,
@@ -44,20 +68,41 @@ class PairingSession {
       hostDeviceName: hostDeviceName,
       hostIp: hostIp,
       hostPort: hostPort,
-      createdAt: now,
-      isActive: true,
+      createdAt: created,
+      ttl: ttl,
+      maxFailedAttempts: maxFailedAttempts,
     );
   }
+
+  DateTime get expiresAt => createdAt.add(ttl);
+
+  /// Time left before the code stops working.
+  Duration remaining([DateTime? now]) {
+    final left = expiresAt.difference(now ?? DateTime.now());
+    return left.isNegative ? Duration.zero : left;
+  }
+
+  bool hasTimedOut([DateTime? now]) => !(now ?? DateTime.now()).isBefore(expiresAt);
 
   void invalidate() {
     isActive = false;
   }
 
-  bool get isExpired => !isActive;
+  bool get isExpired => !isActive || hasTimedOut();
 
-  bool get isLockedOut => failedAttempts >= 5;
+  bool get isLockedOut => failedAttempts >= maxFailedAttempts;
+
+  /// Records a failed handshake. Returns true when the code must be invalidated.
+  bool registerFailedAttempt() {
+    failedAttempts++;
+    if (isLockedOut) invalidate();
+    return isLockedOut;
+  }
 
   String get code => numericCode;
+
+  /// PeerJS peer ID other devices connect to over the internet.
+  String get peerId => 'qs-$numericCode';
 
   /// Formatted numeric code: "123 - 456" for display
   String get formattedCode {
@@ -67,11 +112,13 @@ class PairingSession {
     return numericCode;
   }
 
-  /// Secure pairing payload for QR scanner or direct link
+  /// QR payload: the code plus the one-time nonce, and the LAN address for direct pairing.
   String get qrPayload =>
-      'quickshare://pair?code=$numericCode&sid=$sessionId&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}';
+      'quickshare://pair?code=$numericCode&n=$nonce&sid=$sessionId&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}';
 
   /// App Deep Link for pairing confirmation
-  String get appDeepLink =>
-      'quickshare://pair?sid=$sessionId&code=$numericCode&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}';
+  String get appDeepLink => qrPayload;
+
+  /// For tests: forget which codes were issued.
+  static void resetIssuedCodes() => _issued.clear();
 }
