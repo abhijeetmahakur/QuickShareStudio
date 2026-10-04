@@ -51,6 +51,14 @@ dependencies:
   xml: ^7.0.1
   image: ^4.5.4
   url_launcher: ^6.3.3
+  flutter_webrtc: ^1.6.2+hotfix.3
+  cryptography: ^2.9.0
+  permission_handler: ^13.0.2
+  connectivity_plus: ^7.3.2
+  package_info_plus: ^10.2.2
+  mobile_scanner: ^7.4.2
+  async: ^2.13.1
+  cryptography_flutter: ^2.3.4
 
 dev_dependencies:
   flutter_test:
