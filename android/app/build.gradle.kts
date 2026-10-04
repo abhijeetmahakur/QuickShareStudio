@@ -6,7 +6,8 @@ plugins {
 
 android {
     namespace = "com.quickshare.quickshare"
-    compileSdk = flutter.compileSdkVersion
+    // Some plugins (permission_handler) are compiled against API 37.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

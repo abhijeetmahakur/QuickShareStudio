@@ -1,0 +1,10 @@
+{
+  "name": "quickshare-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Drives the QuickShare end-to-end harnesses in real Chrome.",
+  "devDependencies": {
+    "puppeteer-core": "^24.0.0",
+    "node-turn": "^0.0.6"
+  }
+}

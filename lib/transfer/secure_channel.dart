@@ -128,15 +128,27 @@ class SecureFrameChannel implements FrameChannel {
     return diff == 0;
   }
 
+  // ByteData's 64-bit accessors are unsupported on JavaScript builds; use two 32-bit halves.
+  static void _putCounter(Uint8List target, int offset, int counter) {
+    final view = ByteData.sublistView(target);
+    view.setUint32(offset, counter ~/ 0x100000000);
+    view.setUint32(offset + 4, counter % 0x100000000);
+  }
+
+  static int _readCounter(Uint8List source, int offset) {
+    final view = ByteData.sublistView(source);
+    return view.getUint32(offset) * 0x100000000 + view.getUint32(offset + 4);
+  }
+
   static List<int> _nonce(int counter) {
     final n = Uint8List(12);
-    ByteData.sublistView(n).setUint64(4, counter);
+    _putCounter(n, 4, counter);
     return n;
   }
 
   Future<Uint8List> _decrypt(Uint8List frame) async {
     if (frame.length < 1 + 8 + 16 || frame[0] != _dataFrame) throw SecureChannelException('Unencrypted or malformed frame.');
-    final counter = ByteData.sublistView(frame, 1, 9).getUint64(0);
+    final counter = _readCounter(frame, 1);
     if (counter != _receiveCounter) throw SecureChannelException('Replayed or missing frame.');
     _receiveCounter++;
     try {
@@ -164,7 +176,7 @@ class SecureFrameChannel implements FrameChannel {
     final sealed = _aes.encrypt(frame, secretKey: _sendKey, nonce: _nonce(counter)).then((box) {
       final out = Uint8List(1 + 8 + box.cipherText.length + 16);
       out[0] = _dataFrame;
-      ByteData.sublistView(out, 1, 9).setUint64(0, counter);
+      _putCounter(out, 1, counter);
       out.setRange(9, 9 + box.cipherText.length, box.cipherText);
       out.setRange(9 + box.cipherText.length, out.length, box.mac.bytes);
       encryptedFrames++;

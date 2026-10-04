@@ -77,3 +77,7 @@ __pycache__/
 *.jks
 *.keystore
 /android/key.properties
+
+# E2E harness dependencies
+/tool/e2e/node_modules/
+/tool/e2e/package-lock.json

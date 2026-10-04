@@ -367,7 +367,7 @@ class PeerSession {
       }
     }
     final total = files.fold<int>(0, (s, f) => s + f.size);
-    if (total > config.maxTransferBytes) problem ??= 'transfer is larger than the ${config.maxTransferBytes ~/ (1 << 30)} GB limit';
+    if (total > config.maxTransferBytes) problem ??= 'transfer is larger than the ${config.maxTransferBytes ~/ 1073741824} GB limit';
     if ((json['chunkSize'] as num?)?.toInt() != config.chunkSize) problem ??= 'unsupported chunk size';
     if (problem != null) {
       await _send(FrameType.decline, {'tag': tag, 'reason': problem});
@@ -608,7 +608,8 @@ class _IncomingRun {
 class OutgoingTransfer {
   OutgoingTransfer({required this.files, required this.config, required this.peerName, String? transferId})
       : transferId = transferId ?? randomToken(12),
-        tag = Random.secure().nextInt(1 << 32);
+        // 0xFFFFFFFF, not 1 << 32: on JavaScript builds 1 << 32 is 0.
+        tag = Random.secure().nextInt(0xFFFFFFFF);
 
   final List<FileSource> files;
   final AppConfig config;
