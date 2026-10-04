@@ -10,8 +10,10 @@ import tempfile
 import urllib.parse
 import urllib.request
 import urllib.error
+import base64
 import hashlib
 import secrets
+import struct
 import socket
 import threading
 import time
@@ -73,6 +75,10 @@ def sanitize_filename(name):
 # Files this server wrote during this run (may live in a custom download folder).
 WRITTEN_FILES = set()
 
+# Files being received in pieces (see QuickShareHandler._stream).
+STREAMS = {}
+STREAMS_LOCK = threading.Lock()
+
 # Received files can come from other devices; never launch anything that runs code.
 BLOCKED_OPEN_EXTENSIONS = {
     ".exe", ".bat", ".cmd", ".com", ".msi", ".msp", ".scr", ".pif", ".cpl", ".ps1", ".psm1",
@@ -92,18 +98,23 @@ def unique_path(path):
     return f"{stem} ({n}){ext}"
 
 # =====================================================================================
-# LAN peer protocol (v1) — shared with the native apps (CrossDeviceTransferService).
+# LAN peer protocol (v2) - shared with the native apps (CrossDeviceTransferService).
 #
 #   UDP  8089  "QUICKSHARE_DISCOVER_V1"  -> JSON device info (who is on this Wi-Fi?)
 #   HTTP 8088  GET  /api/ping, /api/device-info
-#              POST /api/pair      {code,id,name,platform,port} -> {token,...} if code matches
-#              POST /api/transfer  file body; requires x-sender-id + x-pair-token from pairing
+#              POST /api/pair        {code,id,name,platform,port} -> {token,...} if code matches
+#              GET  /api/v2/session?from=<peer id>   WebSocket upgrade (paired peers only)
+#
+# A v2 session carries QuickShare's transfer protocol (offer -> explicit accept -> chunks ->
+# SHA-256), end-to-end encrypted by the app (X25519 + AES-GCM keyed with the pairing token).
+# This server never sees file contents in clear: for the desktop app it only relays
+# WebSocket frames between the page (loopback /api/lan/tunnel) and the other device.
 #
 # The LAN listener only exposes these endpoints. The file-saving / app API stays on the
 # loopback server and is never reachable from other devices.
 # =====================================================================================
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 # Overridable for running two instances on one machine (tests); real devices use the defaults.
 LAN_HTTP_PORT = int(os.environ.get("QUICKSHARE_LAN_PORT", "8088"))
 DISCOVERY_PORT = int(os.environ.get("QUICKSHARE_DISCOVERY_PORT", "8089"))
@@ -133,6 +144,185 @@ def detect_lan_ip():
         return "127.0.0.1"
 
 
+# ----------------------------------------------------------------------------------------
+# Minimal WebSocket (RFC 6455) support, stdlib only: enough to relay binary frames.
+# ----------------------------------------------------------------------------------------
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+WS_MAX_FRAME = 4 * 1024 * 1024
+# Seconds the app has to pick up an incoming connection (overridable for tests).
+TUNNEL_PICKUP_TIMEOUT = float(os.environ.get("QUICKSHARE_TUNNEL_TIMEOUT", "20"))
+
+
+class WsClosed(Exception):
+    pass
+
+
+def ws_accept_key(key):
+    return base64.b64encode(hashlib.sha1((key + WS_GUID).encode("ascii")).digest()).decode("ascii")
+
+
+def _ws_mask(data, key):
+    # XOR via big integers: orders of magnitude faster than a Python byte loop.
+    n = len(data)
+    if n == 0:
+        return b""
+    pad = (key * (n // 4 + 1))[:n]
+    return (int.from_bytes(data, "big") ^ int.from_bytes(pad, "big")).to_bytes(n, "big")
+
+
+class WsConn:
+    """One WebSocket connection. [mask] is True for the client side (RFC 6455 5.3)."""
+
+    def __init__(self, reader, sock, mask):
+        self.reader = reader
+        self.sock = sock
+        self.mask = mask
+        self.lock = threading.Lock()
+        self.closed = False
+
+    def _read(self, n):
+        data = self.reader.read(n)
+        if data is None or len(data) < n:
+            raise WsClosed("connection closed")
+        return data
+
+    def recv(self):
+        """Next data message as (opcode, payload). Answers pings; raises WsClosed at the end."""
+        message, first = bytearray(), None
+        while True:
+            b0, b1 = self._read(2)
+            fin, op = b0 & 0x80, b0 & 0x0F
+            length = b1 & 0x7F
+            if length == 126:
+                length = struct.unpack(">H", self._read(2))[0]
+            elif length == 127:
+                length = struct.unpack(">Q", self._read(8))[0]
+            if length > WS_MAX_FRAME:
+                raise WsClosed("frame too large")
+            key = self._read(4) if b1 & 0x80 else None
+            data = self._read(length)
+            if key:
+                data = _ws_mask(data, key)
+            if op == 0x8:
+                self.close()
+                raise WsClosed("closed by peer")
+            if op == 0x9:
+                self.send(data, opcode=0xA)
+                continue
+            if op == 0xA:
+                continue
+            if op in (0x1, 0x2):
+                first, message = op, bytearray(data)
+            elif op == 0x0 and first is not None:
+                message += data
+            if fin and first is not None:
+                return first, bytes(message)
+
+    def send(self, data, opcode=0x2):
+        if self.closed:
+            raise WsClosed("closed")
+        n = len(data)
+        header = bytearray([0x80 | opcode])
+        bit = 0x80 if self.mask else 0
+        if n < 126:
+            header.append(bit | n)
+        elif n < 65536:
+            header.append(bit | 126)
+            header += struct.pack(">H", n)
+        else:
+            header.append(bit | 127)
+            header += struct.pack(">Q", n)
+        if self.mask:
+            key = os.urandom(4)
+            header += key
+            data = _ws_mask(data, key)
+        with self.lock:
+            self.sock.sendall(bytes(header) + data)
+
+    def close(self):
+        if self.closed:
+            return
+        try:
+            with self.lock:
+                frame = bytes([0x88, 0x80, 0, 0, 0, 0]) if self.mask else bytes([0x88, 0x00])
+                self.sock.sendall(frame)
+        except OSError:
+            pass
+        self.closed = True
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+def ws_upgrade(handler):
+    """Completes a server-side WebSocket upgrade on [handler]; returns a WsConn or None."""
+    key = handler.headers.get("Sec-WebSocket-Key")
+    if not key or handler.headers.get("Upgrade", "").lower() != "websocket":
+        return None
+    # Written by hand: WebSocket requires an HTTP/1.1 status line whatever the handler speaks.
+    handler.wfile.write(
+        b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        + b"Sec-WebSocket-Accept: " + ws_accept_key(key).encode("ascii") + b"\r\n\r\n")
+    handler.wfile.flush()
+    handler.close_connection = True
+    return WsConn(handler.rfile, handler.connection, mask=False)
+
+
+def ws_connect(host, port, path, timeout=5):
+    """Opens a client WebSocket to ws://host:port/path. Raises ConnectionError / PermissionError."""
+    sock = socket.create_connection((host, port), timeout=timeout)
+    try:
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        sock.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\n"
+                      f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode("ascii"))
+        reader = sock.makefile("rb")
+        status = reader.readline().decode("latin-1")
+        headers = {}
+        while True:
+            line = reader.readline().decode("latin-1").strip()
+            if not line:
+                break
+            name, _, value = line.partition(":")
+            headers[name.strip().lower()] = value.strip()
+        parts = status.split()
+        code = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        if code == 401:
+            raise PermissionError("not paired")
+        if code != 101 or headers.get("sec-websocket-accept") != ws_accept_key(key):
+            raise ConnectionError(f"upgrade refused (HTTP {code})")
+        sock.settimeout(None)
+        return WsConn(reader, sock, mask=True)
+    except Exception:
+        sock.close()
+        raise
+
+
+def ws_pump(src, dst):
+    """Copies messages from src to dst until either side closes, then closes both."""
+    try:
+        while True:
+            opcode, data = src.recv()
+            dst.send(data, opcode=opcode)
+    except (WsClosed, OSError, ValueError):
+        pass
+    finally:
+        src.close()
+        dst.close()
+
+
+def ws_relay(a, b):
+    """Relays both directions between two WebSockets; returns when the tunnel ends."""
+    t = threading.Thread(target=ws_pump, args=(b, a), daemon=True)
+    t.start()
+    ws_pump(a, b)
+    t.join(timeout=5)
+
+
 class LanState:
     def __init__(self):
         self.lock = threading.Lock()
@@ -146,7 +336,7 @@ class LanState:
         self.peers = {}                  # peer id -> {id,name,platform,ip,port,token}
         self.events = []                 # [{seq, type, ...}] for the app to poll
         self.seq = 0
-        self.received = {}               # file id -> absolute path
+        self.tunnels = {}                # tunnel id -> pending incoming session
         self.failures = {}               # ip -> [timestamps of wrong codes]
 
     def info(self):
@@ -189,11 +379,38 @@ class LanPeerHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/api/ping":
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/ping":
             return self._json(200, {"status": "ok"})
-        if self.path == "/api/device-info":
+        if parsed.path == "/api/device-info":
             return self._json(200, LAN.info())
+        if parsed.path == "/api/v2/session":
+            return self._session(urllib.parse.parse_qs(parsed.query))
         return self._json(404, {"error": "not found"})
+
+    def _session(self, query):
+        """A paired device opens an (end-to-end encrypted) transfer session with this PC."""
+        peer_id = query.get("from", [""])[0]
+        with LAN.lock:
+            peer = LAN.peers.get(peer_id)
+        if not peer:
+            return self._json(401, {"error": "not paired with this device"})
+        remote = ws_upgrade(self)
+        if remote is None:
+            return self._json(400, {"error": "websocket upgrade required"})
+        tunnel_id = uuid.uuid4().hex
+        pending = {"ws": remote, "ready": threading.Event(), "app": None}
+        with LAN.lock:
+            LAN.tunnels[tunnel_id] = pending
+        LAN.add_event({"type": "tunnel_incoming", "tunnelId": tunnel_id, "peer": _peer_public(peer)})
+        picked_up = pending["ready"].wait(TUNNEL_PICKUP_TIMEOUT)
+        with LAN.lock:
+            LAN.tunnels.pop(tunnel_id, None)
+        if not picked_up or pending["app"] is None:
+            remote.close()
+            return None
+        ws_pump(remote, pending["app"])
+        return None
 
     def do_POST(self):
         if self.path == "/api/pair":
@@ -235,55 +452,8 @@ class LanPeerHandler(http.server.BaseHTTPRequestHandler):
         return self._json(200, {**LAN.info(), "status": "paired", "token": token})
 
     def _transfer(self):
-        sender_id = self.headers.get("x-sender-id", "")
-        token = self.headers.get("x-pair-token", "")
-        with LAN.lock:
-            peer = LAN.peers.get(sender_id)
-        if not peer or not token or not secrets.compare_digest(token, peer["token"]):
-            return self._json(401, {"error": "not paired with this device"})
-        try:
-            length = int(self.headers.get("Content-Length", "-1"))
-        except ValueError:
-            length = -1
-        if length < 0 or length > MAX_TRANSFER_BYTES:
-            return self._json(411 if length < 0 else 413, {"error": "missing or too large Content-Length"})
-
-        name = sanitize_filename(urllib.parse.unquote(self.headers.get("x-file-name", "Received_File")))
-        expected = (self.headers.get("x-sha256") or "").lower()
-        os.makedirs(default_save_dir(), exist_ok=True)
-        target = unique_path(os.path.join(default_save_dir(), name))
-        digest = hashlib.sha256()
-        remaining = length
-        try:
-            with open(target, "wb") as f:
-                while remaining > 0:
-                    chunk = self.rfile.read(min(remaining, 1024 * 1024))
-                    if not chunk:
-                        raise ConnectionError("connection closed early")
-                    digest.update(chunk)
-                    f.write(chunk)
-                    remaining -= len(chunk)
-        except Exception as e:  # noqa: BLE001 - reported to the sender
-            try:
-                os.remove(target)
-            except OSError:
-                pass
-            return self._json(400, {"error": f"transfer interrupted: {e}"})
-        sha = digest.hexdigest()
-        if expected and expected != sha:
-            os.remove(target)
-            return self._json(400, {"error": "checksum mismatch"})
-
-        file_id = uuid.uuid4().hex
-        with LAN.lock:
-            LAN.received[file_id] = target
-        WRITTEN_FILES.add(os.path.realpath(target).lower())
-        LAN.add_event({
-            "type": "file_received", "fileId": file_id, "fileName": os.path.basename(target),
-            "size": length, "sha256": sha, "path": target,
-            "sender": _peer_public(peer),
-        })
-        return self._json(200, {"status": "success", "fileName": name, "bytesReceived": length, "sha256": sha})
+        # Protocol v1 sent files without asking the receiver and without encryption.
+        return self._json(426, {"error": "This device runs QuickShare 2. Update QuickShare on the sending device."})
 
 
 class ThreadingHTTPServerExclusive(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -419,38 +589,6 @@ def pair_by_code(code, discovery_port=DISCOVERY_PORT):
     raise LookupError("No device on this network is showing that code. Check the code and try again.")
 
 
-def send_to_peer(peer_id, file_name, data):
-    with LAN.lock:
-        peer = LAN.peers.get(peer_id)
-    if not peer:
-        raise LookupError("This device is not paired. Pair again from Device Pairing.")
-    sha = hashlib.sha256(data).hexdigest()
-    req = urllib.request.Request(
-        f"http://{peer['ip']}:{peer['port']}/api/transfer", data=data, method="POST",
-        headers={
-            "Content-Type": "application/octet-stream",
-            "x-file-name": urllib.parse.quote(file_name),
-            "x-file-size": str(len(data)),
-            "x-sender-id": LAN.device_id,
-            "x-sender-name": urllib.parse.quote(LAN.device_name),
-            "x-sender-platform": _platform_name(),
-            "x-pair-token": peer["token"],
-            "x-sha256": sha,
-        })
-    timeout = 30 + len(data) / (256 * 1024)      # allow ~256 KB/s minimum throughput
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            reply = json.loads(resp.read() or b"{}")
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            raise PermissionError(f'"{peer["name"]}" no longer recognises this PC. Pair again.')
-        raise ConnectionError(f'"{peer["name"]}" rejected the file (HTTP {e.code}).')
-    except (urllib.error.URLError, OSError):
-        raise ConnectionError(f'Could not reach "{peer["name"]}" at {peer["ip"]}:{peer["port"]}. '
-                              "Make sure it is on the same Wi-Fi and QuickShare is open.")
-    return {"status": "sent", "sha256": sha, "reply": reply}
-
-
 class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=web_dir, **kwargs)
@@ -481,15 +619,54 @@ class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
 
     # --- LAN bridge API used by the app (pairing, sending, receiving) ---
 
+    def _lan_tunnel(self, query):
+        """Relays an encrypted session between the app (this WebSocket) and another device."""
+        accept_id = query.get("accept", [""])[0]
+        if accept_id:
+            with LAN.lock:
+                pending = LAN.tunnels.get(accept_id)
+            if not pending or pending["ready"].is_set():
+                return self._send_json(404, {"error": "that connection is gone"})
+            app = ws_upgrade(self)
+            if app is None:
+                return self._send_json(400, {"error": "websocket upgrade required"})
+            pending["app"] = app
+            pending["ready"].set()
+            # The LAN handler thread pumps device -> app; this one pumps app -> device.
+            ws_pump(app, pending["ws"])
+            return None
+        peer_id = query.get("peer", [""])[0]
+        with LAN.lock:
+            peer = LAN.peers.get(peer_id)
+        if not peer:
+            return self._send_json(404, {"error": "This device is not paired. Pair again from Device Pairing."})
+        try:
+            remote = ws_connect(peer["ip"], peer["port"],
+                                "/api/v2/session?" + urllib.parse.urlencode({"from": LAN.device_id}))
+        except PermissionError:
+            return self._send_json(401, {"error": f'"{peer["name"]}" no longer recognises this PC. Pair again.'})
+        except (OSError, ConnectionError, ValueError):
+            return self._send_json(502, {"error": f'Could not reach "{peer["name"]}". Make sure it is on the same Wi-Fi and QuickShare is open.'})
+        app = ws_upgrade(self)
+        if app is None:
+            remote.close()
+            return self._send_json(400, {"error": "websocket upgrade required"})
+        ws_relay(app, remote)
+        return None
+
     def _lan_get(self, path, query):
+        if path == "/api/lan/tunnel":
+            return self._lan_tunnel(query)
         if path == "/api/lan/status":
             return self._send_json(200, {
                 **LAN.info(), "available": LAN.port is not None,
                 "discovery": LAN.discovery_ok, "error": LAN.error,
             })
         if path == "/api/lan/peers":
+            # Tokens are the pre-shared keys the app needs for end-to-end encryption. This API
+            # is loopback-only and origin-checked, so only the app itself can read them.
             with LAN.lock:
-                peers = [_peer_public(p) for p in LAN.peers.values()]
+                peers = [{**_peer_public(p), "token": p["token"]} for p in LAN.peers.values()]
             return self._send_json(200, {"peers": peers})
         if path == "/api/lan/events":
             since = int(query.get("since", ["0"])[0] or 0)
@@ -497,19 +674,6 @@ class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
                 events = [e for e in LAN.events if e["seq"] > since]
                 seq = LAN.seq
             return self._send_json(200, {"seq": seq, "events": events})
-        if path == "/api/lan/file":
-            with LAN.lock:
-                target = LAN.received.get(query.get("id", [""])[0])
-            if not target or not os.path.isfile(target):
-                return self._send_json(404, {"error": "file not found"})
-            with open(target, "rb") as f:
-                data = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return None
         return self._send_json(404, {"error": "not found"})
 
     def _lan_post(self, path, query):
@@ -539,15 +703,6 @@ class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(404, {"error": str(e)})
             LAN.add_event({"type": "peer_paired", "device": _peer_public(peer)})
             return self._send_json(200, {"device": _peer_public(peer)})
-        if path == "/api/lan/send":
-            length = int(self.headers.get("Content-Length", "0"))
-            data = self.rfile.read(length)
-            name = sanitize_filename(query.get("name", ["file"])[0])
-            try:
-                result = send_to_peer(query.get("peer", [""])[0], name, data)
-            except (LookupError, PermissionError, ConnectionError) as e:
-                return self._send_json(502, {"error": str(e)})
-            return self._send_json(200, result)
         if path == "/api/lan/unpair":
             data = self._read_json()
             with LAN.lock:
@@ -562,6 +717,50 @@ class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _target_dir(self, query):
+        custom_dir = query.get("dir", [""])[0].strip()
+        return custom_dir if custom_dir and os.path.isabs(custom_dir) else default_save_dir()
+
+    def _stream(self, path, query):
+        """Receives a file in pieces: open -> append... -> commit (or discard)."""
+        if path == "/api/stream/open":
+            name = sanitize_filename(query.get("name", ["file"])[0])
+            folder = self._target_dir(query)
+            os.makedirs(folder, exist_ok=True)
+            stream_id = uuid.uuid4().hex
+            part = os.path.join(folder, f".quickshare-{stream_id}.part")
+            open(part, "wb").close()
+            with STREAMS_LOCK:
+                STREAMS[stream_id] = {"part": part, "folder": folder, "name": name, "size": 0}
+            return self._send_json(200, {"id": stream_id})
+        with STREAMS_LOCK:
+            entry = STREAMS.get(query.get("id", [""])[0])
+        if not entry:
+            return self._send_json(404, {"error": "unknown stream"})
+        if path == "/api/stream/append":
+            length = int(self.headers.get("Content-Length", "0"))
+            data = self.rfile.read(length)
+            with open(entry["part"], "ab") as f:
+                f.write(data)
+            entry["size"] += len(data)
+            return self._send_json(200, {"size": entry["size"]})
+        if path == "/api/stream/commit":
+            target = unique_path(os.path.join(entry["folder"], entry["name"]))
+            os.replace(entry["part"], target)
+            with STREAMS_LOCK:
+                STREAMS.pop(query.get("id", [""])[0], None)
+            WRITTEN_FILES.add(os.path.realpath(target).lower())
+            return self._send_json(200, {"path": target, "size": entry["size"]})
+        if path == "/api/stream/discard":
+            try:
+                os.remove(entry["part"])
+            except OSError:
+                pass
+            with STREAMS_LOCK:
+                STREAMS.pop(query.get("id", [""])[0], None)
+            return self._send_json(200, {"ok": True})
+        return self._send_json(404, {"error": "not found"})
 
     def _resolve_saved_file(self, query):
         # Opening/revealing is limited to existing files inside the save/preview folders.
@@ -587,6 +786,8 @@ class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
         try:
             if parsed.path.startswith("/api/lan/"):
                 return self._lan_post(parsed.path, query)
+            if parsed.path.startswith("/api/stream/"):
+                return self._stream(parsed.path, query)
             if parsed.path == "/api/save-file":
                 length = int(self.headers.get("Content-Length", "0"))
                 data = self.rfile.read(length)

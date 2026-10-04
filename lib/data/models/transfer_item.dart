@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:uuid/uuid.dart';
+import '../../transfer/transfer_method.dart';
 
 enum TransferStatus {
   queued,
@@ -40,6 +41,14 @@ class TransferItem {
   final String connectionType;
   final Uint8List? rawBytes;
 
+  /// Real transfers: how the bytes travel (null in demo mode).
+  final TransferMethod? method;
+
+  /// Interrupted by a lost connection and can continue where it stopped.
+  final bool resumable;
+  final Duration? eta;
+  final int fileCount;
+
   TransferItem({
     String? transferId,
     required this.fileName,
@@ -61,6 +70,10 @@ class TransferItem {
     this.pageCount,
     this.connectionType = 'Local Network',
     this.rawBytes,
+    this.method,
+    this.resumable = false,
+    this.eta,
+    this.fileCount = 1,
   })  : transferId = transferId ?? const Uuid().v4(),
         startTime = startTime ?? DateTime.now();
 
@@ -75,6 +88,9 @@ class TransferItem {
     int? pageCount,
     String? connectionType,
     Uint8List? rawBytes,
+    bool? resumable,
+    Duration? eta,
+    bool clearEta = false,
   }) {
     return TransferItem(
       transferId: transferId,
@@ -97,6 +113,10 @@ class TransferItem {
       pageCount: pageCount ?? this.pageCount,
       connectionType: connectionType ?? this.connectionType,
       rawBytes: rawBytes ?? this.rawBytes,
+      method: method,
+      resumable: resumable ?? this.resumable,
+      eta: clearEta ? null : (eta ?? this.eta),
+      fileCount: fileCount,
     );
   }
 }

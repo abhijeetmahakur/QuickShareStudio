@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
+import 'package:async/async.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:quickshare/data/models/device_model.dart';
@@ -8,32 +12,60 @@ import 'package:quickshare/data/models/transfer_item.dart';
 import 'package:quickshare/data/services/cross_device_transfer_service.dart';
 import 'package:quickshare/data/services/peer_link.dart';
 import 'package:quickshare/data/services/transfer_engine.dart';
-import 'package:quickshare/core/utils/hash_utils.dart';
+import 'package:quickshare/transfer/app_config.dart';
+import 'package:quickshare/transfer/connection_manager.dart';
+import 'package:quickshare/transfer/file_source.dart';
+import 'package:quickshare/transfer/lan/ws_frame_channel.dart';
+import 'package:quickshare/transfer/protocol/handshake.dart';
+import 'package:quickshare/transfer/protocol/transfer_protocol.dart';
+import 'package:quickshare/transfer/secure_channel.dart';
+import 'package:quickshare/transfer/sinks.dart';
+import 'package:quickshare/transfer/transfer_settings.dart';
+import 'package:web_socket_channel/io.dart';
 
 class _RealHttpOverrides extends HttpOverrides {}
 
-/// Real-network tests of the LAN peer protocol (v1) in the native service, including
-/// interoperability with the desktop app's scripts/server.py.
+Future<void> _waitFor(bool Function() condition, {Duration timeout = const Duration(seconds: 20), String? what}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) throw TimeoutException('Timed out waiting for ${what ?? 'condition'}');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
+/// Real-network tests of the LAN peer protocol (v2) in the native service: pairing, the
+/// end-to-end encrypted session, accept/decline, and interoperability with the desktop
+/// app's scripts/server.py.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = _RealHttpOverrides();
 
   late CrossDeviceTransferService service;
   late TransferEngine engine;
+  late ConnectionManager manager;
+  late Directory downloads;
 
-  setUp(() {
+  setUp(() async {
     service = CrossDeviceTransferService()..resetPairingState();
     engine = TransferEngine();
+    manager = ConnectionManager.instance..resetForTest();
+    manager.config = const AppConfig();
+    TransferSettings.instance.reset();
     engine.pairedDevices.clear();
     engine.activeTransfers.clear();
     engine.historyRecords.clear();
     engine.receivedItems.clear();
     if (engine.isReceivingPaused) engine.togglePauseReceiving();
-    engine.regeneratePairingCode();
+    downloads = await Directory.systemTemp.createTemp('qs_downloads_');
+    engine.downloadDirectory = downloads.path;
+    engine.attachPeerLink(service);
   });
 
   tearDown(() async {
     await service.stopReceiverServer();
+    try {
+      downloads.deleteSync(recursive: true);
+    } catch (_) {}
   });
 
   String code() => engine.currentPairingSession!.numericCode;
@@ -41,147 +73,161 @@ void main() {
   Future<http.Response> pair(String pairCode, {String id = 'android_device_101'}) => http.post(
         Uri.parse('http://127.0.0.1:${service.activePort}/api/pair'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'code': pairCode,
-          'id': id,
-          'name': 'Pixel 8 Pro (Mobile)',
-          'platform': 'Android',
-          'port': 8088,
-        }),
+        body: jsonEncode({'code': pairCode, 'id': id, 'name': 'Pixel 8 Pro', 'platform': 'Android', 'port': 8088}),
       );
 
-  Future<http.StreamedResponse> upload(Uint8List bytes, {String? token, String? sha, String sender = 'android_device_101'}) {
-    final request = http.StreamedRequest('POST', Uri.parse('http://127.0.0.1:${service.activePort}/api/transfer'));
-    request.headers['x-file-name'] = Uri.encodeComponent('experiment_data.csv');
-    request.headers['x-sender-id'] = sender;
-    request.headers['x-sender-name'] = Uri.encodeComponent('Ubuntu Station');
-    request.headers['x-sender-platform'] = 'Linux';
-    if (token != null) request.headers['x-pair-token'] = token;
-    request.headers['x-sha256'] = sha ?? HashUtils.computeSha256(bytes);
-    request.headers['Content-Type'] = 'application/octet-stream';
-    request.sink.add(bytes);
-    request.sink.close();
-    return request.send();
+  /// Pairs this device with itself through the real HTTP API (sender and receiver are the
+  /// same process, talking over sockets).
+  Future<DeviceModel> pairWithSelf() async {
+    final self = await service.pairDirect('127.0.0.1', service.activePort, code());
+    engine.addPairedDevice(self);
+    return self;
   }
 
-  group('Cross-Device & Cross-Platform Transfer Tests', () {
-    test('1. Platform Detection reports valid OS platform string', () {
-      expect(['Windows', 'Android', 'macOS', 'iOS', 'Linux', 'Web', 'Universal'].contains(service.currentPlatformName), isTrue);
+  group('LAN protocol v2 (native service)', () {
+    test('1. Platform detection reports a valid OS name', () {
+      expect(['Windows', 'Android', 'macOS', 'iOS', 'Linux', 'Web', 'Universal'], contains(service.currentPlatformName));
     });
 
-    test('2. Receiver Server starts on local port and responds to /api/ping', () async {
-      final started = await service.startReceiverServer(preferredPort: 9091);
-      expect(started, isTrue);
-      expect(service.isServerRunning, isTrue);
+    test('2. Receiver server starts and answers /api/ping', () async {
+      expect(await service.startReceiverServer(preferredPort: 9091), isTrue);
       final res = await http.get(Uri.parse('http://127.0.0.1:${service.activePort}/api/ping'));
       expect(res.statusCode, 200);
-      expect((jsonDecode(res.body) as Map)['status'], 'ok');
     });
 
-    test('3. Device Info Endpoint returns name, platform, protocol and readiness', () async {
+    test('3. Device info reports protocol 2', () async {
       await service.startReceiverServer(preferredPort: 9092);
-      final data = jsonDecode((await http.get(Uri.parse('http://127.0.0.1:${service.activePort}/api/device-info'))).body)
-          as Map<String, dynamic>;
-      for (final key in ['id', 'name', 'platform', 'port', 'readyToReceive', 'protocol']) {
-        expect(data.containsKey(key), isTrue, reason: key);
-      }
-      expect(data['readyToReceive'], isTrue);
-      expect(data['protocol'], 1);
+      final res = await http.get(Uri.parse('http://127.0.0.1:${service.activePort}/api/device-info'));
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      expect(data['protocol'], 2);
+      expect(data['name'], engine.localDeviceName);
     });
 
     test('4. Pairing requires the code shown on this device and returns a token', () async {
       await service.startReceiverServer(preferredPort: 9093);
-
-      final wrong = await pair('000000');
-      expect(wrong.statusCode, 403);
-      expect(engine.pairedDevices, isEmpty);
-
-      final res = await pair(code());
-      expect(res.statusCode, 200);
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      expect(data['status'], 'paired');
-      expect((data['token'] as String).length, 32);
-
-      final paired = engine.pairedDevices.firstWhere((d) => d.name == 'Pixel 8 Pro (Mobile)');
-      expect(paired.platform, 'Android');
-      expect(paired.deviceType, DeviceType.mobile);
+      expect((await pair('000000')).statusCode, HttpStatus.forbidden);
+      final ok = await pair(code());
+      expect(ok.statusCode, HttpStatus.ok);
+      final token = (jsonDecode(ok.body) as Map<String, dynamic>)['token'] as String;
+      expect(token.length, 32);
+      expect(service.pairingToken('android_device_101'), token);
+      expect(engine.pairedDevices.any((d) => d.id == 'android_device_101'), isTrue);
     });
 
-    test('5. Only paired devices can send; delivered file is verified and recorded', () async {
+    test('5. v1 transfers (no accept, no encryption) are refused', () async {
       await service.startReceiverServer(preferredPort: 9094);
-      final content = Uint8List.fromList('Cross-Platform Transfer Content - Windows to Android'.codeUnits);
-
-      final unpaired = await upload(content, token: 'forged');
-      expect(unpaired.statusCode, 401);
-      expect(engine.receivedItems, isEmpty);
-
-      final token = (jsonDecode((await pair(code())).body) as Map)['token'] as String;
-      final response = await upload(content, token: token);
-      expect(response.statusCode, 200);
-      final data = jsonDecode(await response.stream.bytesToString()) as Map<String, dynamic>;
-      expect(data['status'], 'success');
-      expect(data['bytesReceived'], content.length);
-
-      final received = engine.receivedItems.firstWhere((item) => item.fileName == 'experiment_data.csv');
-      expect(received.senderDeviceName, contains('Ubuntu Station'));
-      expect(received.senderDeviceName, contains('Linux'));
-      expect(received.bytes, content);
-    });
-
-    test('6. Corrupted payload from a paired device is rejected (SHA-256 mismatch)', () async {
-      await service.startReceiverServer(preferredPort: 9095);
-      final token = (jsonDecode((await pair(code())).body) as Map)['token'] as String;
-      final response = await upload(
-        Uint8List.fromList('Real Bytes'.codeUnits),
-        token: token,
-        sha: '0000000000000000000000000000000000000000000000000000000000000000',
+      final token = (jsonDecode((await pair(code())).body) as Map<String, dynamic>)['token'] as String;
+      final res = await http.post(
+        Uri.parse('http://127.0.0.1:${service.activePort}/api/transfer'),
+        headers: {'x-sender-id': 'android_device_101', 'x-pair-token': token, 'x-file-name': 'x.txt'},
+        body: 'hello',
       );
-      expect(response.statusCode, 400);
-      expect(await response.stream.bytesToString(), contains('Checksum mismatch'));
+      expect(res.statusCode, 426);
+      expect(engine.receivedItems, isEmpty);
     });
 
-    test('7. Wrong codes are rate limited', () async {
+    test('6. An unpaired device cannot open a session', () async {
+      await service.startReceiverServer(preferredPort: 9095);
+      await expectLater(
+        WebSocket.connect('ws://127.0.0.1:${service.activePort}/api/v2/session?from=stranger'),
+        throwsA(isA<WebSocketException>()),
+      );
+    });
+
+    test('7. A paired device with the wrong token cannot complete the encrypted handshake', () async {
       await service.startReceiverServer(preferredPort: 9096);
+      await pair(code());
+      final socket = await WebSocket.connect('ws://127.0.0.1:${service.activePort}/api/v2/session?from=android_device_101');
+      final raw = WebSocketFrameChannel(IOWebSocketChannel(socket));
+      await expectLater(
+        SecureFrameChannel.establish(raw, StreamQueue(raw.frames), initiator: true, psk: utf8.encode('f' * 32)),
+        throwsA(isA<SecureChannelException>()),
+      );
+      expect(engine.activeTransfers, isEmpty);
+    });
+
+    test('8. Encrypted transfer end to end: offer -> accept -> saved to disk -> SHA-256 verified', () async {
+      await service.startReceiverServer(preferredPort: 9097);
+      final self = await pairWithSelf();
+      final content = Uint8List.fromList(List.generate(3 * 1024 * 1024 + 77, (i) => (i * 7 + 3) & 0xFF));
+
+      final item = await manager.send(self, [BytesFileSource('dataset_archive.bin', content)]);
+      await _waitFor(() => manager.pendingOffers.isNotEmpty, what: 'accept prompt');
+      final offer = manager.pendingOffers.single;
+      expect(offer.offer.files.single.name, 'dataset_archive.bin');
+      expect(offer.offer.totalBytes, content.length);
+      expect(offer.link.verificationCode, matches(RegExp(r'^\d{4}$')));
+      expect(downloads.listSync(), isEmpty, reason: 'nothing is written before Accept');
+      manager.acceptOffer(offer);
+
+      expect(await engine.waitForTransfer(item.transferId), isTrue);
+      await _waitFor(() => engine.receivedItems.isNotEmpty, what: 'received item');
+      final received = engine.receivedItems.first;
+      expect(received.fileName, 'dataset_archive.bin');
+      expect(received.sha256, sha256.convert(content).toString());
+      final onDisk = File(received.savedToPath);
+      expect(onDisk.existsSync(), isTrue);
+      expect(await onDisk.readAsBytes(), content);
+      expect(downloads.listSync().where((f) => f.path.endsWith('.part')), isEmpty);
+      expect(engine.historyRecords.where((r) => r.isIncoming && r.status == 'completed'), isNotEmpty);
+      expect(engine.historyRecords.where((r) => !r.isIncoming && r.status == 'completed'), isNotEmpty);
+    });
+
+    test('9. Decline on the receiver: nothing is received or written', () async {
+      await service.startReceiverServer(preferredPort: 9098);
+      final self = await pairWithSelf();
+      final item = await manager.send(self, [BytesFileSource('private.zip', Uint8List(500000))]);
+      await _waitFor(() => manager.pendingOffers.isNotEmpty, what: 'accept prompt');
+      manager.declineOffer(manager.pendingOffers.single);
+      expect(await engine.waitForTransfer(item.transferId), isFalse);
+      final sent = engine.activeTransfers.firstWhere((t) => t.transferId == item.transferId);
+      expect(sent.status, TransferStatus.cancelled);
+      expect(sent.errorMessage, contains('declined'));
+      expect(engine.receivedItems, isEmpty);
+      expect(downloads.listSync(), isEmpty);
+    });
+
+    test('10. Cancel mid-transfer removes the partial file on the receiver', () async {
+      await service.startReceiverServer(preferredPort: 9099);
+      TransferSettings.instance.autoAccept = true;
+      final self = await pairWithSelf();
+      final item = await manager.send(self, [GeneratedFileSource('big.bin', 300 * 1024 * 1024)]);
+      // Sender and receiver are the same engine here, so they share one transfer entry.
+      await _waitFor(() => engine.activeTransfers.any((t) => t.transferId == item.transferId && t.progress > 0.01),
+          what: 'transfer progress');
+      engine.cancelTransfer(item.transferId);
+      await _waitFor(() => engine.activeTransfers.firstWhere((t) => t.transferId == item.transferId).status == TransferStatus.cancelled);
+      await _waitFor(() => downloads.listSync().isEmpty, what: 'partial file deleted');
+      expect(engine.receivedItems, isEmpty);
+    });
+
+    test('11. Sending to an unpaired device fails with a clear error', () async {
+      await service.startReceiverServer(preferredPort: 9100);
+      final stranger = DeviceModel(name: 'Stranger', ip: '127.0.0.1', port: service.activePort);
+      await expectLater(
+        manager.send(stranger, [BytesFileSource('notes.txt', Uint8List.fromList([1, 2, 3]))]),
+        throwsA(isA<PeerLinkException>().having((e) => e.message, 'message', contains('not paired'))),
+      );
+    });
+
+    test('12. An unreachable paired device fails with a clear error', () async {
+      await service.startReceiverServer(preferredPort: 9101);
+      final self = await pairWithSelf();
+      await service.stopReceiverServer();
+      await expectLater(
+        manager.send(self, [BytesFileSource('notes.txt', Uint8List.fromList([1, 2, 3]))]),
+        throwsA(isA<PeerLinkException>().having((e) => e.message, 'message', contains('Could not reach'))),
+      );
+    });
+
+    test('13. Wrong codes are rate limited', () async {
+      await service.startReceiverServer(preferredPort: 9102);
       final statuses = <int>[];
       for (var i = 0; i < 10; i++) {
         statuses.add((await pair('999999', id: 'attacker')).statusCode);
       }
-      expect(statuses.first, 403);
-      expect(statuses, contains(429));
-    });
-
-    test('8. Pair + streaming transfer end to end (sender and receiver on this machine)', () async {
-      await service.startReceiverServer(preferredPort: 9097);
-      final self = await service.pairDirect('127.0.0.1', service.activePort, code());
-
-      final testBytes = Uint8List.fromList(List.generate(128 * 1024, (i) => i % 256));
-      final transfer = await service.sendFileCrossPlatform(recipient: self, fileName: 'dataset_archive.bin', bytes: testBytes);
-      expect(transfer.fileName, 'dataset_archive.bin');
-
-      final completed = engine.activeTransfers.firstWhere((t) => t.fileName == 'dataset_archive.bin');
-      expect(completed.status, TransferStatus.completed);
-      expect(completed.progress, 1.0);
-      expect(engine.receivedItems.any((i) => i.fileName == 'dataset_archive.bin'), isTrue);
-      expect(engine.historyRecords.any((h) => h.fileName == 'dataset_archive.bin'), isTrue);
-    });
-
-    test('9. Sending fails with a clear error when the device is unpaired or unreachable', () async {
-      final stranger = DeviceModel(name: 'Offline macOS Laptop', ip: '127.0.0.1', port: 19999, platform: 'macOS');
-      await expectLater(
-        service.sendFile(stranger, 'notes.txt', Uint8List.fromList([1, 2, 3])),
-        throwsA(isA<PeerLinkException>().having((e) => e.message, 'message', contains('not paired'))),
-      );
-
-      await service.startReceiverServer(preferredPort: 9098);
-      final self = await service.pairDirect('127.0.0.1', service.activePort, code());
-      await service.stopReceiverServer();
-      try {
-        await service.sendFileCrossPlatform(recipient: self, fileName: 'notes.txt', bytes: Uint8List.fromList([1, 2, 3]));
-        fail('Expected exception for unreachable device');
-      } on PeerLinkException catch (e) {
-        expect(e.message, contains('Could not reach'));
-        expect(engine.activeTransfers.first.status, TransferStatus.failed);
-      }
+      expect(statuses.first, HttpStatus.forbidden);
+      expect(statuses, contains(HttpStatus.tooManyRequests));
     });
   });
 
@@ -196,6 +242,39 @@ void main() {
       final uri = Uri.parse('http://127.0.0.1:$appPort$path');
       final res = body == null ? await http.get(uri) : await http.post(uri, body: jsonEncode(body));
       return jsonDecode(res.body) as Map<String, dynamic>;
+    }
+
+    /// What the desktop app (BridgePeerLink + ConnectionManager) does with an incoming
+    /// session: pick it up through the loopback tunnel, decrypt with the pairing token and
+    /// run the receiving side of the protocol.
+    Future<TransferSnapshot> desktopAppReceives(String fromPeerId, {required int sinceSeq}) async {
+      Map<String, dynamic>? event;
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (event == null && DateTime.now().isBefore(deadline)) {
+        final events = (await appApi('/api/lan/events?since=$sinceSeq'))['events'] as List;
+        event = events.cast<Map<String, dynamic>>().where((e) => e['type'] == 'tunnel_incoming').firstOrNull;
+        if (event == null) await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(event, isNotNull);
+      expect((event!['peer'] as Map)['id'], fromPeerId);
+      final peers = ((await appApi('/api/lan/peers'))['peers'] as List).cast<Map<String, dynamic>>();
+      final token = peers.firstWhere((p) => p['id'] == fromPeerId)['token'] as String;
+      final socket = await WebSocket.connect('ws://127.0.0.1:$appPort/api/lan/tunnel?accept=${event['tunnelId']}');
+      final raw = WebSocketFrameChannel(IOWebSocketChannel(socket));
+      final secure = await SecureFrameChannel.establish(raw, StreamQueue(raw.frames), initiator: false, psk: utf8.encode(token));
+      final done = Completer<TransferSnapshot>();
+      final session = PeerSession(
+        channel: secure,
+        frames: StreamQueue(secure.frames),
+        remote: RemoteIdentity(id: fromPeerId, name: 'Phone', platform: 'Android'),
+        config: const AppConfig(),
+        onOffer: (_) async => true,
+        openSink: (offer, i) async => MemoryFileSink(offer.files[i].name),
+      )..start();
+      session.incomingUpdates.listen((s) {
+        if (s.phase.isFinal && !done.isCompleted) done.complete(s);
+      });
+      return done.future.timeout(const Duration(seconds: 30));
     }
 
     setUpAll(() async {
@@ -235,42 +314,56 @@ void main() {
       } catch (_) {}
     });
 
-    test('phone app discovers the PC and pairs with its code, then sends it a file', () async {
+    test('phone discovers the PC, pairs with its code and sends it an encrypted file', () async {
       await service.startReceiverServer(preferredPort: 9190);
-
       final found = await service.discoverDevices(discoveryPort: discoveryPort);
       expect(found.any((d) => d['id'] == 'pc-desktop'), isTrue);
 
       await expectLater(service.pairDirect('127.0.0.1', lanPort, '111111'), throwsA(isA<PeerLinkException>()));
       final pc = await service.pairDirect('127.0.0.1', lanPort, '246810');
       expect(pc.name, 'Lab PC');
+      engine.addPairedDevice(pc);
 
-      final bytes = Uint8List.fromList(utf8.encode('Practical 7 output — ✓'));
-      await service.sendFile(pc, 'practical7.txt', bytes);
-
-      final events = (await appApi('/api/lan/events?since=0'))['events'] as List;
-      final received = events.cast<Map<String, dynamic>>().lastWhere((e) => e['type'] == 'file_received');
-      expect(received['fileName'], 'practical7.txt');
-      final file = await http.get(Uri.parse('http://127.0.0.1:$appPort/api/lan/file?id=${received['fileId']}'));
-      expect(file.bodyBytes, bytes);
+      final seq = (await appApi('/api/lan/events?since=0'))['seq'] as int;
+      final bytes = Uint8List.fromList(utf8.encode('Practical 7 output - ✓' * 2000));
+      final pcReceives = desktopAppReceives(engine.localDeviceId, sinceSeq: seq);
+      final item = await manager.send(pc, [BytesFileSource('practical7.txt', bytes)]);
+      final received = await pcReceives;
+      expect(received.phase, TransferPhase.completed);
+      expect(received.received.single.bytes, bytes);
+      expect(await engine.waitForTransfer(item.transferId), isTrue);
     });
 
-    test('PC pairs with the phone app using the phone code, then sends it a file', () async {
+    test('PC pairs with the phone using the phone code, then sends it an encrypted file', () async {
       await service.startReceiverServer(preferredPort: 9191);
-
+      TransferSettings.instance.autoAccept = true;
       final paired = await appApi('/api/lan/pair-direct', {'ip': '127.0.0.1', 'port': service.activePort, 'code': code()});
       expect(paired['device'], isNotNull, reason: '$paired');
-      expect((paired['device'] as Map)['id'], engine.localDeviceId);
       expect(engine.pairedDevices.any((d) => d.id == 'pc-desktop'), isTrue);
 
-      final res = await http.post(
-        Uri.parse('http://127.0.0.1:$appPort/api/lan/send?peer=${Uri.encodeComponent(engine.localDeviceId)}&name=lab_manual.pdf'),
-        body: Uint8List.fromList([37, 80, 68, 70, 45, 49]),
-      );
-      expect(res.statusCode, 200, reason: res.body);
+      // The desktop app opens a tunnel to the phone and runs the sending side.
+      final peers = ((await appApi('/api/lan/peers'))['peers'] as List).cast<Map<String, dynamic>>();
+      final token = peers.firstWhere((p) => p['id'] == engine.localDeviceId)['token'] as String;
+      final socket = await WebSocket.connect('ws://127.0.0.1:$appPort/api/lan/tunnel?peer=${Uri.encodeComponent(engine.localDeviceId)}');
+      final raw = WebSocketFrameChannel(IOWebSocketChannel(socket));
+      final secure = await SecureFrameChannel.establish(raw, StreamQueue(raw.frames), initiator: true, psk: utf8.encode(token));
+      final session = PeerSession(
+        channel: secure,
+        frames: StreamQueue(secure.frames),
+        remote: const RemoteIdentity(id: 'phone', name: 'Phone', platform: 'Android'),
+        config: const AppConfig(),
+        onOffer: (_) async => false,
+        openSink: (o, i) async => MemoryFileSink('x'),
+      )..start();
+      final pdf = Uint8List.fromList([37, 80, 68, 70, 45, 49, ...List.filled(70000, 32)]);
+      final result = await OutgoingTransfer(files: [BytesFileSource('lab_manual.pdf', pdf)], config: const AppConfig(), peerName: 'Phone')
+          .run(session);
+      expect(result.phase, TransferPhase.completed, reason: result.error);
+      await _waitFor(() => engine.receivedItems.any((i) => i.fileName == 'lab_manual.pdf'));
       final item = engine.receivedItems.firstWhere((i) => i.fileName == 'lab_manual.pdf');
-      expect(item.bytes, [37, 80, 68, 70, 45, 49]);
+      expect(item.bytes, pdf);
       expect(item.senderDeviceName, contains('Lab PC'));
+      expect(File(item.savedToPath).readAsBytesSync(), pdf);
     });
   });
 }

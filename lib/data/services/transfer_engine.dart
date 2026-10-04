@@ -18,6 +18,10 @@ import '../models/incoming_transfer_request.dart';
 import '../../core/utils/hash_utils.dart';
 import '../../core/utils/file_utils.dart';
 import '../../core/constants.dart';
+import '../../transfer/app_config.dart';
+import '../../transfer/connection_manager.dart';
+import '../../transfer/file_source.dart';
+import '../../transfer/transfer_method.dart';
 import 'peer_link.dart';
 
 class TransferEngine extends ChangeNotifier {
@@ -37,8 +41,9 @@ class TransferEngine extends ChangeNotifier {
   int localPort = AppConstants.defaultHttpPort;
   bool isCustomDeviceNameSaved = false;
 
-  // Active Pairing Session (Active while app session is active; no countdown timer)
+  // The code this device shows. It expires after [AppConfig.codeTtl] and is then replaced.
   PairingSession? currentPairingSession;
+  Timer? _codeExpiryTimer;
   final List<Timer> _transferTimers = [];
 
   // Active Session PDF
@@ -110,6 +115,7 @@ class TransferEngine extends ChangeNotifier {
     peerLink = link;
     localIp = link.localIp;
     localPort = link.localPort;
+    ConnectionManager.instance.attachLan(link);
     // New code + QR so they carry the real address other devices must use.
     _refreshPairingSession();
   }
@@ -124,6 +130,7 @@ class TransferEngine extends ChangeNotifier {
   }
 
   /// Completes when [transferId] finishes; true if it completed successfully.
+  /// An interrupted (paused) transfer counts as not delivered.
   Future<bool> waitForTransfer(String transferId) async {
     while (true) {
       final match = activeTransfers.where((t) => t.transferId == transferId);
@@ -133,6 +140,7 @@ class TransferEngine extends ChangeNotifier {
           return true;
         case TransferStatus.failed:
         case TransferStatus.cancelled:
+        case TransferStatus.paused:
           return false;
         default:
           await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -302,13 +310,29 @@ class TransferEngine extends ChangeNotifier {
       _invalidatedSessionIds.add(currentPairingSession!.sessionId);
       currentPairingSession!.invalidate();
     }
-    currentPairingSession = PairingSession.create(
+    final config = AppConfig.current;
+    final session = currentPairingSession = PairingSession.create(
       hostDeviceName: localDeviceName,
       hostIp: localIp,
       hostPort: localPort,
+      ttl: config.codeTtl,
+      maxFailedAttempts: config.maxAttempts,
     );
+    scheduleCodeExpiry();
     _syncPeerSession();
+    ConnectionManager.instance.hostCode(session);
     notifyListeners();
+  }
+
+  /// When the code expires its peer is destroyed and a fresh code takes its place. Only runs
+  /// in the live app (after [ConnectionManager.start]), not in tests.
+  void scheduleCodeExpiry() {
+    _codeExpiryTimer?.cancel();
+    final session = currentPairingSession;
+    if (session == null || !ConnectionManager.instance.isStarted) return;
+    _codeExpiryTimer = Timer(session.remaining(), () {
+      if (identical(currentPairingSession, session)) _refreshPairingSession();
+    });
   }
 
   void regeneratePairingCode() {
@@ -321,6 +345,8 @@ class TransferEngine extends ChangeNotifier {
       _invalidatedCodes.add(currentPairingSession!.numericCode);
       _invalidatedSessionIds.add(currentPairingSession!.sessionId);
       currentPairingSession!.invalidate();
+      _codeExpiryTimer?.cancel();
+      ConnectionManager.instance.stopHosting();
       notifyListeners();
     }
   }
@@ -487,7 +513,11 @@ class TransferEngine extends ChangeNotifier {
 
   void disconnectAllDevices() {
     for (final d in pairedDevices) {
-      peerLink?.unpair(d.id);
+      if (d.method == TransferMethod.lan) {
+        peerLink?.unpair(d.id);
+      } else {
+        ConnectionManager.instance.disconnect(d.id);
+      }
     }
     pairedDevices.clear();
     currentPairingSession?.invalidate();
@@ -495,7 +525,12 @@ class TransferEngine extends ChangeNotifier {
   }
 
   void removePairedDevice(String deviceId) {
-    peerLink?.unpair(deviceId);
+    final device = pairedDevices.where((d) => d.id == deviceId).firstOrNull;
+    if (device != null && device.method != TransferMethod.lan) {
+      ConnectionManager.instance.disconnect(deviceId);
+    } else {
+      peerLink?.unpair(deviceId);
+    }
     pairedDevices.removeWhere((d) => d.id == deviceId);
     notifyListeners();
   }
@@ -679,9 +714,7 @@ class TransferEngine extends ChangeNotifier {
     if (!pairedDevices.any((d) => d.id == recipient.id || d.name == recipient.name)) {
       throw Exception('Target device "${recipient.name}" is not paired.');
     }
-    if (currentPairingSession != null && currentPairingSession!.isExpired) {
-      throw Exception('Pairing session has expired. Please establish a new pairing session.');
-    }
+    // Pairing is what authorises sending; this device's own code expiring does not matter.
 
     final sanitized = FileUtils.sanitizeFilename(fileName);
     final sha256Hash = HashUtils.computeSha256(bytes);
@@ -693,19 +726,28 @@ class TransferEngine extends ChangeNotifier {
     fileDataStore[sanitized] = bytes;
     fileDataStore[sha256Hash] = bytes;
 
-    final link = peerLink;
-    if (link != null && link.isAvailable) {
-      return _sendOverNetwork(
-        link: link,
-        recipient: recipient,
-        fileName: sanitized,
-        bytes: bytes,
-        sha256Hash: sha256Hash,
-        totalChunks: totalChunks,
-        sessionName: sessionName,
-        pageCount: pageCount,
-        connectionType: 'Local Network (${recipient.platform ?? "Device"})',
-      );
+    final manager = ConnectionManager.instance;
+    final realDevice = recipient.method != TransferMethod.lan || (peerLink?.isAvailable ?? false);
+    if (realDevice) {
+      try {
+        return await manager.send(recipient, [BytesFileSource(sanitized, bytes)]);
+      } on PeerLinkException catch (e) {
+        final failed = TransferItem(
+          fileName: sanitized,
+          fileSizeBytes: bytes.length,
+          fileType: TransferFileType.other,
+          sha256: sha256Hash,
+          totalChunks: totalChunks,
+          isSender: true,
+          peerDeviceName: recipient.name,
+          peerDeviceId: recipient.id,
+          connectionType: recipient.method.historyLabel,
+          status: TransferStatus.failed,
+          errorMessage: e.message,
+        );
+        addActiveTransfer(failed);
+        return failed;
+      }
     }
 
     final transfer = TransferItem(
@@ -807,92 +849,11 @@ class TransferEngine extends ChangeNotifier {
     _transferTimers.add(timer);
   }
 
-  /// Real transfer: returns the tracked item immediately and updates it as the send progresses.
-  TransferItem _sendOverNetwork({
-    required PeerLink link,
-    required DeviceModel recipient,
-    required String fileName,
-    required Uint8List bytes,
-    required String sha256Hash,
-    required int totalChunks,
-    String? sessionName,
-    int? pageCount,
-    required String connectionType,
-  }) {
-    final transfer = TransferItem(
-      fileName: fileName,
-      fileSizeBytes: bytes.length,
-      fileType: FileUtils.isPdfFilename(fileName)
-          ? TransferFileType.pdf
-          : FileUtils.isImageFilename(fileName)
-              ? TransferFileType.image
-              : TransferFileType.other,
-      sha256: sha256Hash,
-      totalChunks: totalChunks,
-      isSender: true,
-      peerDeviceName: recipient.name,
-      peerDeviceId: recipient.id,
-      sessionName: sessionName,
-      pageCount: pageCount,
-      connectionType: connectionType,
-      rawBytes: bytes,
-      status: TransferStatus.transferring,
-    );
-    activeTransfers.insert(0, transfer);
-    notifyListeners();
-
-    void update(TransferItem Function(TransferItem t) change) {
-      final idx = activeTransfers.indexWhere((t) => t.transferId == transfer.transferId);
-      if (idx == -1) return;
-      activeTransfers[idx] = change(activeTransfers[idx]);
-      notifyListeners();
-    }
-
-    final startTime = DateTime.now();
-    link.sendFile(recipient, fileName, bytes, onProgress: (progress) {
-      final elapsed = DateTime.now().difference(startTime).inMilliseconds;
-      update((t) => t.copyWith(
-            progress: progress,
-            transferredChunks: (progress * totalChunks).floor(),
-            speedBytesPerSec: elapsed > 0 ? bytes.length * progress / (elapsed / 1000) : 0,
-          ));
-    }).then((_) {
-      update((t) => t.copyWith(
-            progress: 1.0,
-            transferredChunks: totalChunks,
-            status: TransferStatus.completed,
-            completedTime: DateTime.now(),
-          ));
-      addHistoryRecord(HistoryRecord(
-        fileName: fileName,
-        fileSize: bytes.length,
-        senderName: localDeviceName,
-        recipientName: recipient.name,
-        isIncoming: false,
-        status: 'completed',
-        sha256: sha256Hash,
-        sessionName: sessionName,
-        pageCount: pageCount,
-        connectionType: connectionType,
-      ));
-    }).catchError((Object e) {
-      update((t) => t.copyWith(status: TransferStatus.failed, errorMessage: e.toString()));
-      addHistoryRecord(HistoryRecord(
-        fileName: fileName,
-        fileSize: bytes.length,
-        senderName: localDeviceName,
-        recipientName: recipient.name,
-        isIncoming: false,
-        status: 'failed',
-        sha256: sha256Hash,
-        sessionName: sessionName,
-        connectionType: connectionType,
-      ));
-    });
-    return transfer;
-  }
-
   void cancelTransfer(String transferId) {
+    if (ConnectionManager.instance.isTracked(transferId)) {
+      ConnectionManager.instance.cancel(transferId);
+      return;
+    }
     final index = activeTransfers.indexWhere((x) => x.transferId == transferId);
     if (index != -1) {
       activeTransfers[index] = activeTransfers[index].copyWith(
@@ -917,6 +878,9 @@ class TransferEngine extends ChangeNotifier {
   }
 
   Future<TransferItem?> retryTransfer(String transferId) async {
+    if (ConnectionManager.instance.isTracked(transferId)) {
+      return ConnectionManager.instance.retry(transferId);
+    }
     final index = activeTransfers.indexWhere((x) => x.transferId == transferId);
     if (index == -1) return null;
     final item = activeTransfers[index];
@@ -1016,6 +980,12 @@ class TransferEngine extends ChangeNotifier {
   }
 
   void resumeTransfer(String transferId) {
+    if (ConnectionManager.instance.isTracked(transferId)) {
+      ConnectionManager.instance.resume(transferId).catchError((Object e) {
+        setNotification('Could not resume', e.toString());
+      });
+      return;
+    }
     final idx = activeTransfers.indexWhere((t) => t.transferId == transferId);
     if (idx != -1) {
       final item = activeTransfers[idx];
@@ -1039,20 +1009,27 @@ class TransferEngine extends ChangeNotifier {
     bool isFromTrustedDevice = true,
     bool recordInHistory = true,
     String? savedPath,
+    String? sha256,
+    int? sizeBytes,
+    String connectionType = 'Direct Local Network',
   }) {
     if (isReceivingPaused) return;
 
     final sanitized = FileUtils.sanitizeFilename(fileName);
-    final sha256Hash = HashUtils.computeSha256(bytes);
+    // Real transfers verify the hash while receiving; large files are not kept in memory.
+    final sha256Hash = sha256 ?? HashUtils.computeSha256(bytes);
+    final size = sizeBytes ?? bytes.length;
     savedPath ??= FileUtils.joinPath(downloadDirectory, sanitized);
 
     // Cache bytes for view / download
-    fileDataStore[sanitized] = bytes;
-    fileDataStore[sha256Hash] = bytes;
+    if (bytes.isNotEmpty) {
+      fileDataStore[sanitized] = bytes;
+      fileDataStore[sha256Hash] = bytes;
+    }
 
     final item = ReceivedItemModel(
       fileName: sanitized,
-      fileSizeBytes: bytes.length,
+      fileSizeBytes: size,
       senderDeviceName: senderDeviceName,
       bytes: bytes,
       savedToPath: savedPath,
@@ -1068,20 +1045,20 @@ class TransferEngine extends ChangeNotifier {
     if (recordInHistory) {
       final record = HistoryRecord(
         fileName: sanitized,
-        fileSize: bytes.length,
+        fileSize: size,
         senderName: senderDeviceName,
         recipientName: localDeviceName,
         isIncoming: true,
         status: 'completed',
         sha256: sha256Hash,
-        connectionType: 'Direct Local Network',
+        connectionType: connectionType,
       );
       historyRecords.insert(0, record);
       _saveHistoryRecords();
     }
 
     lastNotificationTitle = 'Received "$sanitized"';
-    lastNotificationBody = 'From $senderDeviceName (${bytes.length} bytes). Verified SHA-256.';
+    lastNotificationBody = 'From $senderDeviceName ($size bytes). Verified SHA-256.';
     lastNotificationTime = DateTime.now();
 
     notifyListeners();

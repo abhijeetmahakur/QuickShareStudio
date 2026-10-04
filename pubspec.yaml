@@ -59,6 +59,7 @@ dependencies:
   mobile_scanner: ^7.4.2
   async: ^2.13.1
   cryptography_flutter: ^2.3.4
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:

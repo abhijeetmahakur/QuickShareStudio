@@ -1,16 +1,19 @@
-"""End-to-end test of the LAN peer protocol in scripts/server.py.
+"""End-to-end test of the LAN peer protocol (v2) in scripts/server.py.
 
 Starts two independent server instances ("PC A" and "PC B") on one machine and checks
-discovery, code pairing, transfers in both directions, and the security rules.
+discovery, code pairing, the encrypted-session tunnel in both directions, streaming saves,
+and the security rules.
 
     python test/lan/test_lan_protocol.py
 """
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -18,6 +21,11 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SERVER = os.path.join(ROOT, "scripts", "server.py")
+
+# Reuse the server's own WebSocket client to play the part of the app.
+_spec = importlib.util.spec_from_file_location("qs_server", SERVER)
+qs = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(qs)
 
 
 class Instance:
@@ -31,6 +39,7 @@ class Instance:
             f.write("<html></html>")
         env = dict(os.environ, QUICKSHARE_LAN_PORT=str(lan_port),
                    QUICKSHARE_DISCOVERY_PORT=str(discovery_port),
+                   QUICKSHARE_TUNNEL_TIMEOUT="3",
                    HOME=downloads, USERPROFILE=downloads)
         self.proc = subprocess.Popen([sys.executable, os.path.join(self.dir, "server.py")],
                                      cwd=self.dir, env=env)
@@ -62,6 +71,13 @@ class Instance:
 
     def post_json(self, path, payload):
         return self._request(path, json.dumps(payload).encode(), {"Content-Type": "application/json"})
+
+    def events(self, kind):
+        return [e for e in self.get("/api/lan/events?since=0")["events"] if e["type"] == kind]
+
+    def app_socket(self, query):
+        """The app's WebSocket to its own server (loopback tunnel API)."""
+        return qs.ws_connect("127.0.0.1", self.app_port, "/api/lan/tunnel?" + query)
 
     def stop(self):
         self.proc.terminate()
@@ -97,6 +113,7 @@ class LanProtocolTest(unittest.TestCase):
         status = self.a.get("/api/lan/status")
         self.assertTrue(status["available"])
         self.assertEqual(status["port"], 18088)
+        self.assertEqual(status["protocol"], 2)
 
     def test_2_wrong_code_is_rejected(self):
         code = status_of(lambda: self.b.post_json("/api/lan/pair", {"code": "000000"}))
@@ -106,47 +123,104 @@ class LanProtocolTest(unittest.TestCase):
         code = status_of(lambda: self.b.post_json("/api/lan/pair", {"code": "654321"}))
         self.assertEqual(code, 400)
 
-    def test_4_pair_by_code_and_transfer_both_ways(self):
+    def test_4_pair_then_tunnel_both_ways(self):
         paired = self.b.post_json("/api/lan/pair", {"code": "123456"})["device"]
         self.assertEqual(paired["id"], "pc-a")
         self.assertEqual(paired["name"], "PC A")
+        # A learned about B through the pairing request; both apps get the shared token.
+        self.assertTrue(any(e["device"]["id"] == "pc-b" for e in self.a.events("peer_paired")))
+        token_b = {p["id"]: p for p in self.b.get("/api/lan/peers")["peers"]}["pc-a"]["token"]
+        token_a = {p["id"]: p for p in self.a.get("/api/lan/peers")["peers"]}["pc-b"]["token"]
+        self.assertEqual(token_a, token_b)
+        self.assertEqual(len(token_a), 32)
 
-        # A learned about B through the pairing request.
-        events_a = self.a.get("/api/lan/events?since=0")["events"]
-        self.assertTrue(any(e["type"] == "peer_paired" and e["device"]["id"] == "pc-b" for e in events_a))
+        before = len(self.a.events("tunnel_incoming"))
+        app_b = self.b.app_socket("peer=pc-a")              # B's app opens a session to A
+        for _ in range(50):
+            incoming = self.a.events("tunnel_incoming")
+            if len(incoming) > before:
+                break
+            time.sleep(0.1)
+        event = incoming[-1]
+        self.assertEqual(event["peer"]["id"], "pc-b")
+        app_a = self.a.app_socket("accept=" + event["tunnelId"])   # A's app picks it up
 
-        payload = os.urandom(300_000) + "नमस्ते".encode()
-        sent = self.b.get("/api/lan/send?peer=pc-a&name=Lab%20Report.pdf", data=payload)
-        self.assertEqual(sent["status"], "sent")
+        # Opaque binary frames pass through unchanged, both ways, in order.
+        big = os.urandom(1_000_000)
+        app_b.send(b"\x05hello")
+        app_b.send(big)
+        self.assertEqual(app_a.recv(), (2, b"\x05hello"))
+        self.assertEqual(app_a.recv(), (2, big))
+        app_a.send(b"\x06accept")
+        self.assertEqual(app_b.recv(), (2, b"\x06accept"))
+        # A burst larger than the socket buffers: the relay applies backpressure, nothing is lost.
+        received = []
+        reader = threading.Thread(target=lambda: received.extend(app_a.recv()[1] for _ in range(200)))
+        reader.start()
+        for i in range(200):
+            app_b.send(bytes([i % 256]) * 16411)
+        reader.join(timeout=30)
+        self.assertEqual(received, [bytes([i % 256]) * 16411 for i in range(200)])
 
-        received = [e for e in self.a.get("/api/lan/events?since=0")["events"] if e["type"] == "file_received"]
-        self.assertEqual(received[-1]["fileName"], "Lab Report.pdf")
-        self.assertEqual(received[-1]["sender"]["id"], "pc-b")
-        self.assertEqual(self.a.get(f"/api/lan/file?id={received[-1]['fileId']}"), payload)
-        self.assertTrue(os.path.isfile(received[-1]["path"]))
+        # Closing one end tears the whole tunnel down.
+        app_b.close()
+        with self.assertRaises(qs.WsClosed):
+            app_a.recv()
 
-        # And back from A to B with the token from the same pairing.
-        back = self.a.get("/api/lan/send?peer=pc-b&name=reply.txt", data=b"got it")
-        self.assertEqual(back["status"], "sent")
-        received_b = [e for e in self.b.get("/api/lan/events?since=0")["events"] if e["type"] == "file_received"]
-        self.assertEqual(self.b.get(f"/api/lan/file?id={received_b[-1]['fileId']}"), b"got it")
+        # The same picked-up tunnel cannot be claimed twice.
+        self.assertEqual(status_of(lambda: self.a.get("/api/lan/tunnel?accept=" + event["tunnelId"])), 404)
 
-    def test_5_unpaired_sender_is_refused(self):
+    def test_5_unpaired_device_cannot_open_a_session(self):
+        with self.assertRaises(PermissionError):
+            qs.ws_connect("127.0.0.1", 18088, "/api/v2/session?from=evil")
+
+    def test_6_v1_transfers_are_refused(self):
         req = urllib.request.Request("http://127.0.0.1:18088/api/transfer", data=b"evil", method="POST",
                                      headers={"x-sender-id": "pc-b", "x-pair-token": "forged", "x-file-name": "x.exe"})
-        self.assertEqual(status_of(lambda: urllib.request.urlopen(req, timeout=5)), 401)
+        self.assertEqual(status_of(lambda: urllib.request.urlopen(req, timeout=5)), 426)
 
-    def test_6_app_api_is_not_exposed_to_other_sites_or_the_network(self):
-        evil_origin = status_of(lambda: self.a.get("/api/lan/events", headers={"Origin": "https://evil.example"}))
+    def test_7_unclaimed_incoming_session_is_closed(self):
+        self.b.post_json("/api/lan/pair", {"code": "123456"})
+        app_b = self.b.app_socket("peer=pc-a")
+        # Nobody on A picks it up: after the pickup timeout (3 s here) the tunnel closes.
+        start = time.time()
+        with self.assertRaises((qs.WsClosed, OSError)):
+            app_b.recv()
+        self.assertLess(time.time() - start, 10)
+
+    def test_8_streaming_save(self):
+        folder = tempfile.mkdtemp(prefix="qs_stream_")
+        try:
+            sid = self.a.post_json(f"/api/stream/open?name=..%2F..%2Fevil.txt&dir={urllib.request.quote(folder)}", {})["id"]
+            for piece in (b"abc", b"def" * 1000):
+                self.a._request(f"/api/stream/append?id={sid}", piece, {"Content-Type": "application/octet-stream"})
+            done = self.a.post_json(f"/api/stream/commit?id={sid}", {})
+            self.assertEqual(os.path.dirname(done["path"]), folder, "path traversal is stripped")
+            self.assertEqual(os.path.basename(done["path"]), "evil.txt")
+            with open(done["path"], "rb") as f:
+                self.assertEqual(f.read(), b"abc" + b"def" * 1000)
+            self.assertFalse([n for n in os.listdir(folder) if n.endswith(".part")])
+
+            sid = self.a.post_json(f"/api/stream/open?name=x.bin&dir={urllib.request.quote(folder)}", {})["id"]
+            self.a._request(f"/api/stream/append?id={sid}", b"partial", {"Content-Type": "application/octet-stream"})
+            self.a.post_json(f"/api/stream/discard?id={sid}", {})
+            self.assertEqual(sorted(os.listdir(folder)), ["evil.txt"], "discarded data is deleted")
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_9_app_api_is_not_exposed_to_other_sites_or_the_network(self):
+        evil_origin = status_of(lambda: self.a.get("/api/lan/peers", headers={"Origin": "https://evil.example"}))
         self.assertEqual(evil_origin, 403)
-        rebinding = status_of(lambda: self.a.get("/api/lan/events", headers={"Host": "evil.example"}))
+        rebinding = status_of(lambda: self.a.get("/api/lan/peers", headers={"Host": "evil.example"}))
         self.assertEqual(rebinding, 403)
-        # The LAN port only speaks the peer protocol.
+        # The LAN port only speaks the peer protocol: no tokens, tunnels or file saving there.
+        for path in ("/api/lan/peers", "/api/lan/tunnel?peer=pc-b"):
+            self.assertEqual(status_of(lambda: urllib.request.urlopen(f"http://127.0.0.1:18088{path}", timeout=5)), 404)
         lan_save = status_of(lambda: urllib.request.urlopen(urllib.request.Request(
             "http://127.0.0.1:18088/api/save-file?name=x.txt", data=b"x", method="POST"), timeout=5))
         self.assertEqual(lan_save, 404)
 
-    def test_7_wrong_codes_are_rate_limited(self):
+    def test_zz_wrong_codes_are_rate_limited(self):
         def try_code():
             req = urllib.request.Request("http://127.0.0.1:18088/api/pair", method="POST",
                                          data=json.dumps({"code": "999999", "id": "attacker"}).encode())

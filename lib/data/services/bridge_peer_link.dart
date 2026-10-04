@@ -2,15 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/device_model.dart';
-import '../models/received_item_model.dart';
-import '../../core/utils/file_utils.dart';
+import '../../transfer/channel.dart';
+import '../../transfer/lan/ws_frame_channel.dart';
 import 'peer_link.dart';
 import 'transfer_engine.dart';
 
 /// [PeerLink] for the browser-based desktop app: the page cannot open network sockets,
-/// so pairing and transfers go through the local launcher server (`scripts/server.py`),
-/// which speaks the LAN peer protocol on the app's behalf.
+/// so pairing goes through the local launcher server (`scripts/server.py`), and transfer
+/// sessions are relayed by it (WebSocket tunnel). Encryption happens here in the app, so the
+/// server only ever relays ciphertext.
 class BridgePeerLink implements PeerLink {
   BridgePeerLink._(this._ip, this._port, this._seq);
 
@@ -19,9 +21,16 @@ class BridgePeerLink implements PeerLink {
   int _seq;
   Timer? _poller;
   bool _polling = false;
+  final Map<String, String> _tokens = {};
+  final _incoming = StreamController<IncomingLanSession>.broadcast();
 
   static Uri _api(String path, [Map<String, String>? query]) =>
       Uri.base.resolve(path).replace(queryParameters: query);
+
+  static Uri _socket(String path, Map<String, String> query) {
+    final http = _api(path, query);
+    return http.replace(scheme: http.scheme == 'https' ? 'wss' : 'ws');
+  }
 
   /// Connects to the local server; returns null when it has no LAN support
   /// (e.g. the app was opened from a plain static file server).
@@ -38,10 +47,10 @@ class BridgePeerLink implements PeerLink {
         (events['seq'] as num?)?.toInt() ?? 0,
       );
       await link._restorePeers();
-      link._poller = Timer.periodic(const Duration(milliseconds: 1500), (_) => link._poll());
+      link._poller = Timer.periodic(const Duration(milliseconds: 800), (_) => link._poll());
       return link;
     } catch (e) {
-      debugPrint('LAN bridge unavailable: $e');
+      debugPrint('LAN bridge unavailable');
       return null;
     }
   }
@@ -53,9 +62,17 @@ class BridgePeerLink implements PeerLink {
   @override
   int get localPort => _port;
 
+  @override
+  Stream<IncomingLanSession> get incomingSessions => _incoming.stream;
+
+  @override
+  String? pairingToken(String peerId) => _tokens[peerId];
+
   Future<void> _restorePeers() async {
     final data = jsonDecode((await http.get(_api('/api/lan/peers'))).body) as Map<String, dynamic>;
     for (final p in (data['peers'] as List).cast<Map<String, dynamic>>()) {
+      final token = p['token'] as String?;
+      if (token != null) _tokens[p['id'] as String] = token;
       TransferEngine().addPairedDevice(_device(p));
     }
   }
@@ -87,27 +104,22 @@ class BridgePeerLink implements PeerLink {
       for (final e in (data['events'] as List).cast<Map<String, dynamic>>()) {
         _seq = (e['seq'] as num).toInt();
         if (e['type'] == 'peer_paired') {
+          await _restorePeers();
           engine.addPairedDevice(_device(e['device'] as Map<String, dynamic>));
-        } else if (e['type'] == 'file_received') {
-          final res = await http.get(_api('/api/lan/file', {'id': e['fileId'] as String}));
-          if (res.statusCode != 200) continue;
-          final sender = e['sender'] as Map<String, dynamic>;
-          final name = e['fileName'] as String;
-          engine.receiveIncomingTransfer(
-            senderDeviceName: '${sender['name']} (${sender['platform']})',
-            fileName: name,
-            bytes: res.bodyBytes,
-            fileType: FileUtils.isPdfFilename(name)
-                ? ReceivedFileType.pdf
-                : FileUtils.isImageFilename(name)
-                    ? ReceivedFileType.image
-                    : ReceivedFileType.other,
-            savedPath: e['path'] as String?,
-          );
+        } else if (e['type'] == 'tunnel_incoming') {
+          final peer = e['peer'] as Map<String, dynamic>;
+          if (!_tokens.containsKey(peer['id'])) await _restorePeers();
+          try {
+            final socket = WebSocketChannel.connect(_socket('/api/lan/tunnel', {'accept': e['tunnelId'] as String}));
+            await socket.ready;
+            _incoming.add(IncomingLanSession(WebSocketFrameChannel(socket), peer['id'] as String));
+          } catch (_) {
+            // The other device gave up waiting; nothing to clean up.
+          }
         }
       }
-    } catch (e) {
-      debugPrint('LAN bridge poll failed: $e');
+    } catch (_) {
+      // The local server restarted or is busy; the next poll retries.
     } finally {
       _polling = false;
     }
@@ -135,6 +147,7 @@ class BridgePeerLink implements PeerLink {
     }
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     if (res.statusCode != 200) throw PeerLinkException(data['error'] as String? ?? 'Pairing failed.');
+    await _restorePeers();
     return _device(data['device'] as Map<String, dynamic>);
   }
 
@@ -146,31 +159,24 @@ class BridgePeerLink implements PeerLink {
       _pair('/api/lan/pair-direct', {'ip': host, 'port': port, 'code': code});
 
   @override
-  Future<void> sendFile(
-    DeviceModel peer,
-    String fileName,
-    Uint8List bytes, {
-    void Function(double progress)? onProgress,
-  }) async {
-    final http.Response res;
+  Future<FrameChannel> openSession(DeviceModel peer) async {
+    if (!_tokens.containsKey(peer.id)) await _restorePeers();
+    if (!_tokens.containsKey(peer.id)) {
+      throw PeerLinkException('"${peer.name}" is not paired with this PC. Pair again from Device Pairing.');
+    }
     try {
-      res = await http.post(
-        _api('/api/lan/send', {'peer': peer.id, 'name': fileName}),
-        headers: {'Content-Type': 'application/octet-stream'},
-        body: bytes,
-      );
+      final socket = WebSocketChannel.connect(_socket('/api/lan/tunnel', {'peer': peer.id}));
+      await socket.ready.timeout(const Duration(seconds: 10));
+      return WebSocketFrameChannel(socket);
     } catch (_) {
-      throw PeerLinkException('The QuickShare background service is not responding. Restart the app.');
+      // The server answers with an error instead of upgrading when the device is unreachable.
+      throw PeerLinkException('Could not reach "${peer.name}". Make sure it is on the same Wi-Fi and QuickShare is open.');
     }
-    if (res.statusCode != 200) {
-      final error = (jsonDecode(res.body) as Map<String, dynamic>)['error'] as String?;
-      throw PeerLinkException(error ?? 'Sending failed (HTTP ${res.statusCode}).');
-    }
-    onProgress?.call(1.0);
   }
 
   @override
   Future<void> unpair(String peerId) async {
+    _tokens.remove(peerId);
     try {
       await http.post(
         _api('/api/lan/unpair'),
