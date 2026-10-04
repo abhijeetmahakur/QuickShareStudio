@@ -88,9 +88,11 @@ Future<RemoteIdentity> acceptHandshake(
   LocalIdentity me, {
   required String Function(String mode, String proof, String nonce) verify,
   Duration timeout = const Duration(seconds: 15),
+  void Function()? onChallengeSent,
 }) async {
   final nonce = randomToken();
   await channel.send(Frame.encodeControl(FrameType.challenge, {...me.toJson(), 'nonce': nonce}));
+  onChallengeSent?.call();
   final Frame hello;
   try {
     hello = Frame.decode(await frames.next.timeout(timeout));

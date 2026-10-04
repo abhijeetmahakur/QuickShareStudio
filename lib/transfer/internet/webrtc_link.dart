@@ -456,10 +456,12 @@ class InternetHost {
     final channel = DataChannelFrameChannel(pc, dc);
     final frames = StreamQueue(channel.frames);
     final previous = dc.onDataChannelState;
-    var handled = false;
+    var started = false;
+    var challengeSent = false;
+    Timer? probe;
     Future<void> run() async {
-      if (handled) return;
-      handled = true;
+      if (started) return;
+      started = true;
       try {
         final binding = await _sessionBinding(pc);
         final remote = await acceptHandshake(
@@ -467,15 +469,24 @@ class InternetHost {
           frames,
           me,
           verify: (mode, proof, nonce) => verify(mode, proof, nonce, binding),
+          onChallengeSent: () => challengeSent = true,
         );
+        probe?.cancel();
         await _bindVerification(pc, channel);
         _pending.remove(id);
         onConnection(InternetConnection(channel, frames, remote));
       } on HandshakeException catch (e) {
+        probe?.cancel();
         _pending.remove(id);
         await channel.close();
         if (e.countsAsFailedAttempt) onFailedAttempt?.call(e);
       } catch (_) {
+        if (!challengeSent && channel.isOpen) {
+          // The channel was not open yet (sending throws until it is): try again shortly.
+          started = false;
+          return;
+        }
+        probe?.cancel();
         _pending.remove(id);
         await channel.close();
       }
@@ -486,6 +497,17 @@ class InternetHost {
       if (s == RTCDataChannelState.RTCDataChannelOpen) run();
     };
     if (dc.state == RTCDataChannelState.RTCDataChannelOpen) run();
+    // On the web, dart_webrtc reports a remotely created channel as `connecting` whatever its
+    // real state and relies on the `open` event, which can be missed when the browser
+    // announces the channel as already open (seen on a slow CI runner): the sender then waits
+    // for a challenge that never comes. Keep trying to start until the challenge goes out.
+    probe = Timer.periodic(const Duration(milliseconds: 250), (t) {
+      if (challengeSent || !channel.isOpen || t.tick > 120) {
+        t.cancel();
+        return;
+      }
+      run();
+    });
   }
 
   /// Destroys the peer: the code stops being reachable over the internet immediately.
