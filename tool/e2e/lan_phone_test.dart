@@ -7,10 +7,8 @@
 // The PC pairs with the phone's code over the LAN protocol, then plays the desktop app:
 // it opens a tunnel through server.py, runs the encrypted session and sends a file. Accept it
 // on the phone.
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:async/async.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -99,6 +97,5 @@ void main() {
         'encrypted frames ${secure.encryptedFrames}');
     expect(secure.encryptedFrames, greaterThan(source.size ~/ const AppConfig().chunkSize));
     await session.close();
-    unawaited(Future<void>.value(Uint8List(0)));
   }, timeout: const Timeout(Duration(minutes: 10)), skip: _phoneCode.isEmpty ? 'set PHONE_CODE' : false);
 }
