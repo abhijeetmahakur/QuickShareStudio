@@ -116,7 +116,7 @@ class _PairingViewState extends State<PairingView> {
       );
     } else {
       setState(() {
-        _statusError = 'Pairing failed. The code is invalid, expired, or was already used.';
+        _statusError = engine.lastPairingError ?? 'Pairing failed. The code is invalid, expired, or was already used.';
         _statusSuccess = null;
       });
     }
@@ -171,7 +171,7 @@ class _PairingViewState extends State<PairingView> {
       );
     } else {
       setState(() {
-        _statusError = 'Pairing failed. The QR code is invalid, expired, or was already used.';
+        _statusError = engine.lastPairingError ?? 'Pairing failed. The QR code is invalid, expired, or was already used.';
         _statusSuccess = null;
       });
     }
@@ -681,6 +681,15 @@ class _PairingViewState extends State<PairingView> {
                   color: _softLightGray,
                 ),
               ),
+              // Devices that cannot discover others (e.g. iPhones) pair with this address + code.
+              if (context.watch<TransferEngine>().hasRealNetwork) ...[
+                const SizedBox(height: 6),
+                SelectableText(
+                  'This device: ${context.watch<TransferEngine>().localIp}:${context.watch<TransferEngine>().localPort}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w600, color: _primaryText),
+                ),
+              ],
             ],
           ),
         ),

@@ -121,11 +121,15 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
         _deliveryStatuses[devId] = 'Sending...';
         setState(() {});
 
-        await engine.sendFileToDevice(
+        final transfer = await engine.sendFileToDevice(
           fileName: 'Clipboard_Snippet_$timestamp.txt',
           bytes: bytes,
           recipient: dev,
         );
+        if (!await engine.waitForTransfer(transfer.transferId)) {
+          final failed = engine.activeTransfers.where((t) => t.transferId == transfer.transferId);
+          throw failed.isNotEmpty && failed.first.errorMessage != null ? failed.first.errorMessage! : 'Transfer failed';
+        }
 
         succeededNames.add(dev.name);
         _deliveryStatuses[devId] = 'Sent successfully';

@@ -30,15 +30,14 @@ Everything runs locally on your machine. No account, no cloud upload.
 | **PDF Studio** | Three-panel editor (pages · live preview · layout controls) with 1, 2, 3, 4, 6, 8 and 10 images per page or a custom grid; A3/A4/A5/Letter paper; printer-safe margins; borders, captions, headers/footers and page numbers; optional searchable text layer from captions. Work is kept while you switch sections. |
 | **PDF Tools** | Lossless merge and split (pages are copied, not re-rendered, so text stays selectable and files stay small); compression (72 / 100 / 150 DPI JPEG profiles); OCR for screenshots and scanned PDFs (English, Hindi) with text export and searchable-PDF output; file converter with whole-folder support. |
 | **Save, print & share** | Exports save straight to `Downloads/QuickShare`; *Print / Preview* opens the file in your system PDF viewer; *Share* opens the OS share sheet. |
-| **Device pairing** | Expiring 6-digit codes and QR pairing; the code regenerates on demand and old codes are invalidated. |
-| **File sharing** | Send to one or several paired devices with progress, pause/resume and SHA-256 integrity checks. |
-| **Screenshot sessions** | Group screenshots per lab or experiment, with duplicate detection and drag-and-drop reordering. |
+| **Device pairing** | Pair over your Wi-Fi with the other device's 6-digit code (found automatically) or its address + code. Wrong codes are rejected and rate-limited; old codes stop working when regenerated. |
+| **File sharing** | Send files, PDFs and clipboard text to one or several paired devices directly over the local network — nothing goes through the internet. Only paired devices can send to you, and every file is verified with SHA-256. Received files land in `Downloads/QuickShare`. |
+| **Screenshot sessions** | Group screenshots per lab or experiment (sidebar → *Screenshot Sessions*), with duplicate detection and drag-and-drop reordering. |
 | **Universal clipboard** | Text, links, code and images, previewed before anything is sent. |
 | **Privacy & security** | PIN lock, private mode, configurable download folder and one-click cache purge. |
+| **Updates** | *Settings → Check for updates* compares your version with the latest GitHub release and opens its download page. |
 
-> **Project status:** PDF Studio, PDF Tools and file export are fully functional. Live device-to-device transfer over the local network is under active development: in the Windows/Linux packages, pairing and transfers run in a clearly labelled demo mode and no file leaves the computer.
->
-> **Internet use:** everything works offline except OCR, which downloads the Tesseract engine and language data on first use, and PDF compression/OCR page rendering, which loads PDF.js from a CDN.
+> **Works offline:** PDF tools, OCR (English and Hindi), printing and device-to-device sharing need no internet connection. Only *Check for updates* goes online.
 
 ---
 
@@ -115,6 +114,18 @@ Apple only allows signed apps on iPhone and iPad, so there is no downloadable `.
 
 ---
 
+## 🔗 Connecting your devices
+
+Both devices must be on the **same Wi-Fi network or hotspot** with QuickShare Studio open.
+
+1. On the device you want to connect to, open **Device Pairing** — it shows a 6-digit code and its address (for example `192.168.1.20:8088`).
+2. On the other device, open **Device Pairing → Connect to another device** and enter that code. The app finds the device on the network and pairs.
+3. Send from **Send Files**, **Universal Clipboard**, or a PDF's **Send to Paired Device** button. Received files appear in **Received Items** and in `Downloads/QuickShare`.
+
+**First run on Windows:** Windows Defender Firewall asks whether Python may communicate on networks. Allow it on **Private networks** — that is how your phone reaches the PC. On Linux, allow TCP 8088 and UDP 8089 if a firewall is active.
+
+**iPhone/iPad:** iOS does not let apps discover devices automatically. On the PC, use **Send Files → Direct connect** with the iPhone's address and code (both shown on its Device Pairing screen); the iPhone can then also send to the PC.
+
 ## 🛠 Build from source
 
 **Prerequisites:** [Flutter SDK 3.47+](https://docs.flutter.dev/get-started/install) (Dart 3.13+), Git, and Python 3 for the desktop launcher.
@@ -167,6 +178,8 @@ git push origin v1.6.0
 | PDF | `pdf` for generation, `printing` for rasterising and previews |
 | Storage | `shared_preferences`; files saved via a local helper server (`scripts/server.py`) on desktop |
 | Integrity | `crypto` (SHA-256), `uuid` |
+| Networking | LAN peer protocol v1: UDP 8089 discovery, HTTP 8088 pairing + transfers with per-pairing tokens. Native builds serve it from Dart (`CrossDeviceTransferService`); the desktop app through `scripts/server.py` |
+| Bundled web libraries | `pdf-lib` (lossless page copy), PDF.js (rendering), Tesseract.js + English/Hindi data (OCR) in `web/vendor/` |
 
 ```
 lib/

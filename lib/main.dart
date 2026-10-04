@@ -1,8 +1,10 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'data/services/transfer_engine.dart';
 import 'data/services/app_update_service.dart';
 import 'data/services/cross_device_transfer_service.dart';
+import 'data/services/bridge_peer_link.dart';
 import 'core/services/theme_service.dart';
 import 'features/dashboard/dashboard_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
@@ -12,7 +14,15 @@ import 'core/constants.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  CrossDeviceTransferService().initialize();
+  // Real device-to-device networking: native builds run their own LAN server; the
+  // browser-based desktop app goes through the local launcher server (server.py).
+  if (kIsWeb) {
+    BridgePeerLink.connect().then((link) {
+      if (link != null) TransferEngine().attachPeerLink(link);
+    });
+  } else {
+    CrossDeviceTransferService().initialize();
+  }
   runApp(
     MultiProvider(
       providers: [

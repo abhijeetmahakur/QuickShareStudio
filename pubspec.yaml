@@ -50,6 +50,7 @@ dependencies:
   archive: ^4.3.0
   xml: ^7.0.1
   image: ^4.5.4
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:

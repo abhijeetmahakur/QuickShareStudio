@@ -94,6 +94,7 @@ class _SendFilesViewState extends State<SendFilesView> {
   // Direct IP connect fields
   final TextEditingController _ipController = TextEditingController();
   final TextEditingController _portController = TextEditingController(text: '8088');
+  final TextEditingController _directCodeController = TextEditingController();
   bool _showDirectConnect = false;
   bool _isProbing = false;
 
@@ -117,6 +118,7 @@ class _SendFilesViewState extends State<SendFilesView> {
   void dispose() {
     _ipController.dispose();
     _portController.dispose();
+    _directCodeController.dispose();
     super.dispose();
   }
 
@@ -290,8 +292,13 @@ class _SendFilesViewState extends State<SendFilesView> {
   Future<void> _probeDirectDevice() async {
     final ip = _ipController.text.trim();
     final port = int.tryParse(_portController.text.trim()) ?? AppConstants.defaultHttpPort;
+    final code = _directCodeController.text.replaceAll(RegExp(r'\D'), '');
     if (ip.isEmpty) {
       setState(() => _errorMessage = 'Please enter a target device IP address.');
+      return;
+    }
+    if (code.length != 6) {
+      setState(() => _errorMessage = 'Enter the 6-digit pairing code shown on that device.');
       return;
     }
 
@@ -300,28 +307,33 @@ class _SendFilesViewState extends State<SendFilesView> {
       _errorMessage = null;
     });
 
-    final crossService = CrossDeviceTransferService();
-    final probed = await crossService.probeRemoteDevice(ip, port);
+    // Direct connect is a real pairing with the code (same as scanning the device's QR code).
+    final engine = context.read<TransferEngine>();
+    final before = engine.pairedDevices.map((d) => d.id).toSet();
+    final ok = await engine.pairWithQrPayload(
+      'quickshare://pair?host=${Uri.encodeComponent(ip)}&port=$port&code=$code',
+    );
     if (!mounted) return;
-
     setState(() => _isProbing = false);
 
-    if (probed != null) {
-      final engine = context.read<TransferEngine>();
-      engine.addPairedDevice(probed);
+    if (ok) {
+      final added = engine.pairedDevices.where((d) => !before.contains(d.id));
+      final device = added.isNotEmpty ? added.first : engine.pairedDevices.last;
       setState(() {
-        _selectedRecipientIds.add(probed.id);
+        _selectedRecipientIds.add(device.id);
         _showDirectConnect = false;
+        _directCodeController.clear();
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: AppColors.surfaceElevated,
-          content: Text('Connected to "${probed.name}" (${probed.platform ?? "Device"}) at $ip:$port'),
+          content: Text('Paired with "${device.name}" (${device.platform ?? "Device"}) at $ip:$port'),
         ),
       );
     } else {
       setState(() {
-        _errorMessage = 'Could not reach device at $ip:$port. Ensure QuickShare is active on the target device and both are on the same Wi-Fi / hotspot network.';
+        _errorMessage = engine.lastPairingError ??
+            'Could not pair with $ip:$port. Check the code, and that both devices are on the same Wi-Fi.';
       });
     }
   }
@@ -360,23 +372,40 @@ class _SendFilesViewState extends State<SendFilesView> {
       _successMessage = null;
     });
 
-    int sentCount = 0;
     try {
+      final started = <String>[];
       for (final file in _selectedFiles) {
         for (final recipient in targetDevices) {
-          await engine.sendFileToDevice(
+          final transfer = await engine.sendFileToDevice(
             fileName: file.name,
             bytes: file.bytes,
             recipient: recipient,
           );
-          sentCount++;
+          started.add(transfer.transferId);
         }
       }
+      // Report what actually arrived, not just what was started.
+      final results = await Future.wait(started.map(engine.waitForTransfer));
+      final sentCount = results.where((ok) => ok).length;
+      final failedCount = results.length - sentCount;
 
       if (!mounted) return;
+      if (failedCount > 0) {
+        final reasons = engine.activeTransfers
+            .where((t) => started.contains(t.transferId) && t.errorMessage != null)
+            .map((t) => t.errorMessage!)
+            .toSet()
+            .join(' ');
+        setState(() {
+          _isSending = false;
+          _errorMessage = '$failedCount of ${results.length} transfer(s) failed. $reasons';
+          _successMessage = sentCount > 0 ? 'Sent $sentCount transfer(s).' : null;
+        });
+        return;
+      }
       setState(() {
         _isSending = false;
-        _successMessage = 'Dispatched $sentCount transfer(s) across ${targetDevices.length} recipient device(s).';
+        _successMessage = 'Sent $sentCount transfer(s) across ${targetDevices.length} recipient device(s).';
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1158,6 +1187,24 @@ class _SendFilesViewState extends State<SendFilesView> {
                         decoration: InputDecoration(
                           hintText: '8088',
                           labelText: 'Port',
+                          labelStyle: TextStyle(color: AppColors.secondaryText, fontSize: 12),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: _directCodeController,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        style: TextStyle(color: AppColors.white, fontSize: 13, fontFamily: 'Poppins'),
+                        decoration: InputDecoration(
+                          counterText: '',
+                          hintText: '6 digits',
+                          labelText: 'Pairing Code',
                           labelStyle: TextStyle(color: AppColors.secondaryText, fontSize: 12),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),

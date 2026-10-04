@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants.dart';
 import '../../core/utils/hash_utils.dart';
 import '../models/app_update_info.dart';
@@ -161,8 +165,18 @@ class AppUpdateService extends ChangeNotifier {
       await prefs.setInt('last_checked_update_millis', _lastCheckedTime!.millisecondsSinceEpoch);
     } catch (_) {}
 
-    // Inspect published release
-    final release = _publishedRemoteRelease;
+    // Inspect published release: an in-app published one (development/tests), else GitHub.
+    AppUpdateInfo? release = _publishedRemoteRelease;
+    if (release == null) {
+      try {
+        release = await fetchLatestGitHubRelease();
+      } catch (e) {
+        _status = UpdateStatus.idle;
+        _statusMessage = 'Could not check for updates (are you online?). Running v$_currentVersion';
+        notifyListeners();
+        return null;
+      }
+    }
     if (release != null && release.isNewerVersion) {
       _latestUpdate = release;
       _status = _isUpdatePostponed ? UpdateStatus.postponed : UpdateStatus.available;
@@ -191,6 +205,55 @@ class AppUpdateService extends ChangeNotifier {
     }
   }
 
+  /// Where releases are published.
+  static const String releasesApi =
+      'https://api.github.com/repos/abhijeetmahakur/QuickShareStudio/releases/latest';
+
+  static bool _isGitHubRelease(AppUpdateInfo info) => info.downloadUrl.startsWith('https://github.com/');
+
+  /// Reads the latest GitHub release. Returns null when none has been published yet.
+  Future<AppUpdateInfo?> fetchLatestGitHubRelease() async {
+    final res = await http
+        .get(Uri.parse(releasesApi), headers: {'Accept': 'application/vnd.github+json'})
+        .timeout(const Duration(seconds: 8));
+    if (res.statusCode == 404) return null;
+    if (res.statusCode != 200) throw Exception('GitHub returned HTTP ${res.statusCode}');
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+
+    // Package for this platform (the desktop app is the web build packaged per OS).
+    final wanted = kIsWeb
+        ? (defaultTargetPlatform == TargetPlatform.linux ? 'Linux' : 'Windows')
+        : defaultTargetPlatform == TargetPlatform.android
+            ? 'Android'
+            : defaultTargetPlatform == TargetPlatform.linux
+                ? 'Linux'
+                : 'Windows';
+    final assets = (data['assets'] as List? ?? []).cast<Map<String, dynamic>>();
+    final asset = assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull;
+    final digest = (asset?['digest'] as String? ?? '');
+
+    final body = (data['body'] as String? ?? '').trim();
+    final notes = body
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.startsWith('- ') || l.startsWith('* '))
+        .map((l) => l.substring(2))
+        .take(8)
+        .toList();
+    final tag = (data['tag_name'] as String? ?? '0.0.0').replaceFirst(RegExp(r'^v'), '');
+    return AppUpdateInfo(
+      version: tag,
+      currentVersion: _currentVersion,
+      title: data['name'] as String? ?? 'QuickShare Studio v$tag',
+      description: body.isEmpty ? 'A new version of QuickShare Studio is available.' : body.split('\n').first,
+      releaseNotes: notes,
+      publishedAt: DateTime.tryParse(data['published_at'] as String? ?? '') ?? DateTime.now(),
+      packageSizeBytes: (asset?['size'] as num?)?.toInt() ?? 0,
+      packageSha256: digest.startsWith('sha256:') ? digest.substring(7) : '',
+      downloadUrl: data['html_url'] as String? ?? 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest',
+    );
+  }
+
   // -------------------------------------------------------------
   // Postpone Update (Requirement 13.B & 13.D)
   // -------------------------------------------------------------
@@ -216,6 +279,21 @@ class AppUpdateService extends ChangeNotifier {
       _statusMessage = 'No update package available to install.';
       notifyListeners();
       return false;
+    }
+
+    if (_isGitHubRelease(_latestUpdate!)) {
+      final version = _latestUpdate!.version;
+      final opened = await launchUrl(Uri.parse(_latestUpdate!.downloadUrl), mode: LaunchMode.externalApplication);
+      _statusMessage = opened
+          ? 'Opened the v$version download page. Install it to finish updating.'
+          : 'Could not open the download page. Visit ${_latestUpdate!.downloadUrl}';
+      notifyListeners();
+      if (opened) {
+        onComplete?.call();
+      } else {
+        onError?.call(_statusMessage);
+      }
+      return opened;
     }
 
     // 1. Guard against updating while a file is actively transferring

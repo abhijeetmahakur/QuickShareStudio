@@ -213,6 +213,14 @@ class Sidebar extends StatelessWidget {
                     isDarkMode: effectiveIsDark,
                     onTap: () => onItemSelected?.call(1),
                   ),
+                  // Section 9 (added later, listed next to PDF Studio where it belongs).
+                  _buildNavItem(
+                    label: 'Screenshot Sessions',
+                    icon: Icons.collections_outlined,
+                    isSelected: selectedIndex == 9,
+                    isDarkMode: effectiveIsDark,
+                    onTap: () => onItemSelected?.call(9),
+                  ),
                   _buildNavItem(
                     label: 'Device Pairing',
                     icon: Icons.devices_rounded,

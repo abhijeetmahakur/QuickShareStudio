@@ -20,6 +20,7 @@ void main() {
     'Universal Clipboard',
     'Transfer History',
     'Settings & Privacy',
+    'Screenshot Sessions',
   ];
 
   Future<void> pumpApp(WidgetTester tester, Size size, {int initialIndex = 0}) async {

@@ -14,6 +14,7 @@ import '../pdf_tools/pdf_tools_view.dart';
 import '../clipboard/universal_clipboard_view.dart';
 import '../transfer_history/transfer_history_view.dart';
 import '../security/security_settings_view.dart';
+import '../screenshot_collections/screenshot_collections_view.dart';
 
 /// QuickShare Studio — Frontend Dashboard UI
 /// Reproduces the reference layout, proportions, colors, and Poppins typography.
@@ -40,7 +41,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Sections opened so far. They stay mounted (hidden) so switching sections does not
   /// throw away work such as PDF Studio pages or PDF Tools selections.
   final Set<int> _visitedSections = {};
-  static const int _sectionCount = 9;
+  static const int _sectionCount = 10;
 
   /// Keeps the workspace state when the layout switches between desktop and mobile.
   final GlobalKey _workspaceKey = GlobalKey();
@@ -261,6 +262,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return const TransferHistoryView();
       case 8: // Settings & Privacy
         return const SecuritySettingsView();
+      case 9: // Screenshot Sessions
+        return const ScreenshotCollectionsView();
       case 0:
       default:
         return _buildMainContentArea(context);

@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
-import '../../data/services/cross_device_transfer_service.dart';
+import 'package:provider/provider.dart';
+import '../../data/services/transfer_engine.dart';
 import '../constants.dart';
 
-/// Shown on pairing/sending screens when the local network transfer service is not running
-/// (always the case in the browser-based desktop app). Without it, pairing and transfers
-/// are simulated, so the user must not mistake them for real ones.
+/// Shown on pairing/sending screens when no real network link is attached (for example the
+/// desktop app opened without its launcher server). Pairing and transfers are then
+/// simulated, so the user must not mistake them for real ones.
 class DemoModeNotice extends StatelessWidget {
   const DemoModeNotice({super.key});
 
   @override
   Widget build(BuildContext context) {
-    if (CrossDeviceTransferService().isServerRunning) return const SizedBox.shrink();
+    if (context.watch<TransferEngine>().hasRealNetwork) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 20),

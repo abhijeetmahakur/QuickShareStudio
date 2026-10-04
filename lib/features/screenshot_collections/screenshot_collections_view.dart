@@ -291,7 +291,9 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Top Navigation Segmented Pills: Sessions List vs Active Workspace
-            Row(
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
               children: [
                 _buildSegmentButton(
                   title: 'Sessions (${engine.screenshotSessions.length})',
@@ -299,7 +301,6 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
                   isSelected: _currentTab == 0,
                   onTap: () => setState(() => _currentTab = 0),
                 ),
-                const SizedBox(width: 12),
                 _buildSegmentButton(
                   title: 'Workspace: ${activeSession.name}',
                   icon: Icons.collections_outlined,
@@ -345,13 +346,19 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
             children: [
               Icon(icon, size: 18, color: isSelected ? AppColors.primaryAccent : AppColors.secondaryText),
               const SizedBox(width: 8),
-              Text(
+              ConstrainedBox(
+                // Long session names are shortened instead of overflowing on phones.
+                constraints: const BoxConstraints(maxWidth: 260),
+                child: Text(
                 title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: isSelected ? AppColors.white : AppColors.secondaryText,
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
                   fontSize: 13,
                 ),
+              ),
               ),
             ],
           ),
@@ -411,9 +418,12 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'AVAILABLE SESSIONS',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey),
+            const Flexible(
+              child: Text(
+                'AVAILABLE SESSIONS',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey),
+              ),
             ),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
@@ -461,13 +471,15 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Text(
                               session.name,
                               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.white),
                             ),
-                            const SizedBox(width: 10),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(

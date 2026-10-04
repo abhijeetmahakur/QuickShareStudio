@@ -92,10 +92,10 @@ void main() {
         expect(find.text('Ready to Receive'), findsOneWidget);
         expect(find.text('0 Paired'), findsOneWidget);
 
-        // Nearby Devices, Saved Templates, and Screenshot Sessions must NOT be present
+        // Nearby Devices and Saved Templates must NOT be present; Screenshot Sessions is a section again
         expect(find.text('Nearby Devices'), findsNothing);
         expect(find.text('Saved Templates'), findsNothing);
-        expect(find.text('Screenshot Sessions'), findsNothing);
+        expect(find.text('Screenshot Sessions'), findsOneWidget);
 
         // 9 Navigation items in exact order
         expect(find.text('Dashboard'), findsOneWidget);
@@ -251,7 +251,6 @@ void main() {
         // Removed sections should not be found
         expect(find.text('Nearby Devices'), findsNothing);
         expect(find.text('Saved Templates'), findsNothing);
-        expect(find.text('Screenshot Sessions'), findsNothing);
 
         // Workspace cards for available features
         expect(find.text('Create PDF'), findsOneWidget);

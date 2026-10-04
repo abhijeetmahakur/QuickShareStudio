@@ -148,6 +148,13 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
     return false;
   }
 
+  /// Forgets pairing tokens and wrong-code history (tests start from a clean state).
+  @visibleForTesting
+  void resetPairingState() {
+    _peerTokens.clear();
+    _pairFailures.clear();
+  }
+
   /// Closes the HTTP receiver server and discovery responder
   Future<void> stopReceiverServer() async {
     _discoverySocket?.close();
