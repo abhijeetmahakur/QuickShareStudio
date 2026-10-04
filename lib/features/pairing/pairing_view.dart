@@ -15,6 +15,7 @@ import '../../transfer/transfer_method.dart';
 import '../connect/qr_scanner_page.dart';
 import '../connect/widgets/code_status_bar.dart';
 import '../connect/widgets/connect_status_panel.dart';
+import '../connect/widgets/methods_intro.dart';
 import '../connect/widgets/transfer_widgets.dart';
 import '../nearby/nearby_devices_screen.dart';
 
@@ -867,6 +868,11 @@ class _PairingViewState extends State<PairingView> {
                     color: _primaryText,
                   ),
                 ),
+              ),
+              IconButton(
+                tooltip: 'How connecting works',
+                onPressed: () => showMethodsIntro(context),
+                icon: Icon(Icons.help_outline_rounded, color: _softLightGray, size: 20),
               ),
             ],
           ),

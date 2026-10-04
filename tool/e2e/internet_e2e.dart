@@ -484,9 +484,10 @@ Future<void> main() async {
     home: Scaffold(body: Center(child: ValueListenableBuilder(valueListenable: _status, builder: (_, s, _) => Text(s)))),
   ));
   final q = Uri.base.queryParameters;
-  final config = AppConfig.current;
   final turnUrl = q['turn'];
   final turn = turnUrl == null ? null : IceServer([turnUrl], username: q['turnUser'], credential: q['turnPass']);
+  // With a TURN server the two-instance roles may relay (as a real app with TURN would).
+  final config = turn == null ? AppConfig.current : AppConfig.current.copyWith(turnServers: [turn]);
   final bigMb = int.tryParse(q['bigMb'] ?? '') ?? 500;
   switch (q['role']) {
     case 'receiver':

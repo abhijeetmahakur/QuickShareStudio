@@ -506,9 +506,11 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
   Future<void> _downloadOrSaveItem(BuildContext context, ReceivedItemModel item, TransferEngine engine) async {
     final bytes = item.bytes.isNotEmpty ? item.bytes : engine.fileDataStore[item.fileName];
     if (bytes == null || bytes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('File contents are no longer available.')),
-      );
+      // Large received files go straight to disk and are not kept in memory.
+      final message = item.savedToPath.isNotEmpty
+          ? 'Already saved to ${item.savedToPath}.'
+          : 'File contents are no longer available.';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       return;
     }
     final String message;
@@ -548,6 +550,10 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
   // Preview / Open Item Dialog
   // -------------------------------------------------------------
   void _previewItem(BuildContext context, ReceivedItemModel item, TransferEngine engine) {
+    if (item.bytes.isEmpty && item.savedToPath.isNotEmpty && (engine.fileDataStore[item.fileName]?.isEmpty ?? true)) {
+      FileActions.runWithSnackBar(context, () => FileActions.openSaved(item.savedToPath));
+      return;
+    }
     if (item.fileType == ReceivedFileType.pdf && item.bytes.isNotEmpty) {
       FileActions.runWithSnackBar(context, () => FileActions.open(item.bytes, item.fileName));
       return;

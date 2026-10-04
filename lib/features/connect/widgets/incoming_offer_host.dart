@@ -5,6 +5,7 @@ import '../../../core/constants.dart';
 import '../../../core/design/tokens.dart';
 import '../../../core/utils/format_utils.dart';
 import '../../../transfer/connection_manager.dart';
+import 'methods_intro.dart';
 import 'transfer_widgets.dart';
 
 /// Shows the Accept / Decline prompt for incoming files above whatever screen is open.
@@ -22,6 +23,7 @@ class IncomingOfferHost extends StatelessWidget {
     final pending = manager?.pendingOffers.where((p) => !p.isDecided).firstOrNull;
     return Stack(children: [
       child,
+      const Positioned.fill(child: MethodsIntroOverlay()),
       if (pending != null && manager != null) ...[
         const ModalBarrier(dismissible: false, color: Color(0x99000000)),
         Center(child: AcceptOfferCard(key: ValueKey(pending.offer.transferId), pending: pending, manager: manager)),

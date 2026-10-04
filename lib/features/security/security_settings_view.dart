@@ -1,4 +1,5 @@
 import 'dart:io' show File;
+import 'widgets/connection_settings_section.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -459,6 +460,10 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
 
             // Application Updates & Device Maintenance (Required by Widget Tests)
             _buildUpdatesSection(context, updateService, engine),
+            const SizedBox(height: 24),
+
+            // Connections: auto-accept, default method, internet & Bluetooth
+            const ConnectionSettingsSection(),
             const SizedBox(height: 24),
 
             // -------------------------------------------------------------

@@ -1,6 +1,7 @@
 import 'dart:io';
-import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'package:printing/printing.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../utils/file_utils.dart';
 
 Future<String> saveFile(Uint8List bytes, String fileName, String? directory) async {
@@ -24,4 +25,15 @@ Future<String> openFile(Uint8List bytes, String fileName) async {
 Future<String> shareFile(Uint8List bytes, String fileName, String? directory) async {
   await Printing.sharePdf(bytes: bytes, filename: fileName);
   return 'Shared "$fileName"';
+}
+
+Future<String> openSavedFile(String path) async {
+  if (!File(path).existsSync()) throw Exception('The file is no longer at $path');
+  if (Platform.isAndroid) {
+    final opened = await const MethodChannel('quickshare/system').invokeMethod<bool>('openFile', {'path': path}) ?? false;
+    if (!opened) throw Exception('No app on this phone can open this kind of file.');
+    return 'Opened ${path.split(Platform.pathSeparator).last}';
+  }
+  if (!await launchUrl(Uri.file(path))) throw Exception('Could not open $path');
+  return 'Opened ${path.split(Platform.pathSeparator).last}';
 }

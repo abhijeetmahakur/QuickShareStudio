@@ -61,7 +61,13 @@ async function launch(label) {
 const query = (o) => Object.entries(o).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
 let results = [];
 try {
-  if (args['two-instance']) {
+  if (args.role === 'sender') {
+    // Send to a real device (e.g. a phone) showing --code; accept the prompt on that device.
+    const send = await launch('sender');
+    await send.page.goto(`${base}?${query({ role: 'sender', code: args.code, bigMb: args.bigMb || 30, turn: args.turn, turnUser: args.turnUser, turnPass: args.turnPass })}`);
+    results = await send.done;
+    await send.browser.close();
+  } else if (args['two-instance']) {
     // Two separate Chrome processes act as two devices.
     const recv = await launch('receiver');
     const send = await launch('sender');
