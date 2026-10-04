@@ -83,3 +83,8 @@ Future<String> shareFile(Uint8List bytes, String fileName, String? directory) as
   await _serverAction('reveal-file', path);
   return 'Saved to $path and opened its folder for sharing';
 }
+
+Future<String> openSavedFile(String path) async {
+  await _serverAction('open-file', path);
+  return 'Opened "${path.split(RegExp(r'[\\/]')).last}"';
+}

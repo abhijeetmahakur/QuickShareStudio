@@ -15,6 +15,9 @@ class FileActions {
   /// Opens the file in its default Windows app (for PDFs, a viewer that can print).
   static Future<String> open(Uint8List bytes, String fileName) => impl.openFile(bytes, fileName);
 
+  /// Opens a file that is already saved (large received files are not kept in memory).
+  static Future<String> openSaved(String path) => impl.openSavedFile(path);
+
   /// Opens the OS share sheet; falls back to saving and revealing the file.
   static Future<String> share(Uint8List bytes, String fileName, {String? directory}) =>
       impl.shareFile(bytes, fileName, directory);

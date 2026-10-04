@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import '../../transfer/transfer_method.dart';
 
 enum DeviceType { desktop, mobile, tablet, browser }
 
@@ -14,6 +15,12 @@ class DeviceModel {
   final String fingerprint;
   final String? platform;
 
+  /// How this device is reached. Internet and Bluetooth devices exist only while connected.
+  final TransferMethod method;
+
+  /// 4 digits both users compare to rule out an interceptor (live connections only).
+  final String? verificationCode;
+
   DeviceModel({
     String? id,
     required this.name,
@@ -25,6 +32,8 @@ class DeviceModel {
     DateTime? lastSeen,
     String? fingerprint,
     this.platform,
+    this.method = TransferMethod.lan,
+    this.verificationCode,
   })  : id = id ?? const Uuid().v4(),
         lastSeen = lastSeen ?? DateTime.now(),
         fingerprint = fingerprint ?? name.hashCode.toRadixString(16);
@@ -39,6 +48,8 @@ class DeviceModel {
     DateTime? lastSeen,
     String? fingerprint,
     String? platform,
+    TransferMethod? method,
+    String? verificationCode,
   }) {
     return DeviceModel(
       id: id,
@@ -51,6 +62,8 @@ class DeviceModel {
       lastSeen: lastSeen ?? this.lastSeen,
       fingerprint: fingerprint ?? this.fingerprint,
       platform: platform ?? this.platform,
+      method: method ?? this.method,
+      verificationCode: verificationCode ?? this.verificationCode,
     );
   }
 
@@ -65,6 +78,7 @@ class DeviceModel {
         'lastSeen': lastSeen.toIso8601String(),
         'fingerprint': fingerprint,
         'platform': platform,
+        'method': method.name,
       };
 
   factory DeviceModel.fromJson(Map<String, dynamic> json) => DeviceModel(
@@ -78,5 +92,6 @@ class DeviceModel {
         lastSeen: DateTime.tryParse(json['lastSeen'] as String? ?? '') ?? DateTime.now(),
         fingerprint: json['fingerprint'] as String? ?? '',
         platform: json['platform'] as String?,
+        method: TransferMethod.tryParse(json['method'] as String?) ?? TransferMethod.lan,
       );
 }

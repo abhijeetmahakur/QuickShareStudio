@@ -11,8 +11,13 @@ class AppUpdateInfo {
   final int packageSizeBytes;
   final String packageSha256;
   final String minSupportedVersion;
+
+  /// Release page (opened when the update cannot be applied in-app).
   final String downloadUrl;
   final bool isMandatory;
+
+  /// Direct link to this platform's package (APK / desktop zip), empty if none.
+  final String packageUrl;
 
   const AppUpdateInfo({
     required this.version,
@@ -26,7 +31,11 @@ class AppUpdateInfo {
     this.minSupportedVersion = '1.0.0',
     this.downloadUrl = 'https://updates.quickshare.local/releases',
     this.isMandatory = false,
+    this.packageUrl = '',
   });
+
+  /// The running version is older than the oldest one still supported: updating is required.
+  bool get isBelowMinimum => compareVersions(currentVersion, minSupportedVersion) < 0;
 
   bool get isNewerVersion {
     return compareVersions(version, currentVersion) > 0;
@@ -57,6 +66,7 @@ class AppUpdateInfo {
     'minSupportedVersion': minSupportedVersion,
     'downloadUrl': downloadUrl,
     'isMandatory': isMandatory,
+    'packageUrl': packageUrl,
   };
 
   factory AppUpdateInfo.fromJson(Map<String, dynamic> json) => AppUpdateInfo(
@@ -73,6 +83,7 @@ class AppUpdateInfo {
     minSupportedVersion: json['minSupportedVersion'] as String? ?? '1.0.0',
     downloadUrl: json['downloadUrl'] as String? ?? 'https://updates.quickshare.local/releases',
     isMandatory: json['isMandatory'] as bool? ?? false,
+    packageUrl: json['packageUrl'] as String? ?? '',
   );
 
   String serialize() => jsonEncode(toJson());

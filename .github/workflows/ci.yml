@@ -35,8 +35,35 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Two-instance pairing & transfer test
+      - name: Two-instance pairing & encrypted-session tunnel test
         run: python test/lan/test_lan_protocol.py
+      - name: Desktop in-app update (download, verify, swap, restart)
+        run: python test/lan/test_update_flow.py
+
+  internet-e2e:
+    name: Internet transfers (PeerJS Cloud + WebRTC in Chrome)
+    runs-on: ubuntu-latest
+    # Uses the public PeerJS Cloud; a cloud outage must not block merges.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: flutter pub get
+      - run: flutter build web --wasm -t tool/e2e/internet_e2e.dart -o build/e2e_web
+      - run: cd tool/e2e && npm install --no-audit --no-fund
+      - name: Single-page scenarios (50 MB large file)
+        run: node tool/e2e/run_internet_e2e.mjs --bigMb=50 --chrome="$(which google-chrome)"
+      - name: Forced TURN relay (local TURN server)
+        run: |
+          node tool/e2e/turn_server.mjs 3478 &
+          sleep 2
+          node tool/e2e/run_internet_e2e.mjs --scenarios=forced-relay --turn=turn:127.0.0.1:3478 --turnUser=e2e --turnPass=e2e-secret --chrome="$(which google-chrome)"
 
   web-build:
     name: Desktop (web) build

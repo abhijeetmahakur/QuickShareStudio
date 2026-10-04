@@ -1,0 +1,41 @@
+# Changelog
+
+All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
+
+## [2.0.0] - 2026-10-05
+
+> **Updating from 1.x: install this version once by hand.** Versions before 2.0 have no
+> in-app updater, so they cannot install 2.0 by themselves. Download 2.0 from this page
+> (Android: `QuickShareStudio-Android.apk`; Windows/Linux: the zip/tarball, extracted over
+> your old folder). From 2.0 on, QuickShare finds and installs updates itself.
+>
+> **Android:** if Android says *"App not installed"*, the old APK was signed with a
+> different key: uninstall the old version first (received files in Download/QuickShare
+> are kept), then install this one.
+>
+> **Both devices need 2.0.** Transfers now ask the receiver first and are end-to-end
+> encrypted; a 1.x device cannot send to a 2.0 device (it is told to update).
+
+### Added
+- **Connect over the internet:** devices on different networks (home/office, mobile data) connect with the same 6-digit code or QR code. Signaling via PeerJS Cloud, data directly between devices over WebRTC, with a TURN relay fallback for strict networks.
+- **Bluetooth for offline transfers (Android 10+):** nearby phones find each other over Bluetooth, agree on an encryption key, and send the files over Wi-Fi Direct. No Wi-Fi network or internet needed.
+- **Automatic fallback:** QuickShare looks on your Wi-Fi first and, if the device is not there within 5 seconds, tries the internet; Bluetooth is offered when you are offline.
+- **Accept before receiving:** you see who is sending which files (names, count, total size) and tap Accept or Decline. Nothing is received before that.
+- **Verification code:** both devices show the same 4 digits for a connection; if they differ, someone is in the middle.
+- **End-to-end encryption everywhere:** WebRTC (DTLS) over the internet; X25519 + AES-256-GCM for same-Wi-Fi and Bluetooth transfers.
+- **Large files and many files:** 16 KB chunks with sequence numbers and flow control, SHA-256 verification per file, live progress, speed and time left, cancel at any time, and resume after a dropped connection.
+- **In-app updates:** Android downloads, verifies (SHA-256 and signing key) and installs new versions; the desktop app updates and restarts itself. Very old versions are asked to update.
+- **Settings > Connections:** auto-accept (off by default), default connection method, automatic internet fallback, internet reachability.
+- A first-run guide to the three ways to connect, a QR camera scanner on phones, and transfers that keep running in the background on Android.
+
+### Changed
+- Pairing codes are generated with a secure random generator, work once, and expire after 5 minutes (or after 5 failed attempts).
+- Same-Wi-Fi transfers use protocol v2 (discovery and pairing are unchanged).
+- Received files are written straight to disk (Download/QuickShare), so very large files no longer need to fit in memory.
+
+### Fixed
+- Pairing behind port forwarding kept the wrong port.
+- Several issues found while testing on Android 14: permission prompts, cancelling an interrupted transfer, and reconnecting to the internet service after a network change.
+
+## [1.6.0]
+- Device-to-device sharing on the same Wi-Fi, offline OCR and PDF tools, update checks.

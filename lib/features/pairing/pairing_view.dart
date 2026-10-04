@@ -7,6 +7,17 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../data/services/transfer_engine.dart';
 import '../../data/models/device_model.dart';
 import '../../core/widgets/hover_card.dart';
+import '../../core/utils/format_utils.dart';
+import '../../data/models/transfer_item.dart';
+import '../../transfer/bluetooth/bluetooth_support.dart';
+import '../../transfer/connection_manager.dart';
+import '../../transfer/transfer_method.dart';
+import '../connect/qr_scanner_page.dart';
+import '../connect/widgets/code_status_bar.dart';
+import '../connect/widgets/connect_status_panel.dart';
+import '../connect/widgets/methods_intro.dart';
+import '../connect/widgets/transfer_widgets.dart';
+import '../nearby/nearby_devices_screen.dart';
 
 enum PairingDisplayMode { qrCode, sixDigitCode }
 enum ConnectMode { sixDigitCode, scanQrCode }
@@ -84,6 +95,11 @@ class _PairingViewState extends State<PairingView> {
       return;
     }
 
+    if (_isLive(engine)) {
+      await _connectLive(cleanCode);
+      return;
+    }
+
     setState(() => _isConnecting = true);
 
     final success = await engine.pairWithNumericCode(cleanCode);
@@ -139,6 +155,20 @@ class _PairingViewState extends State<PairingView> {
 
     final engine = context.read<TransferEngine>();
 
+    if (_isLive(engine)) {
+      final qr = PairingQr.parse(payload);
+      if (qr == null) {
+        setState(() => _statusError = "That isn't a QuickShare pairing code. Scan the QR code on the other device's Device Pairing screen.");
+        return;
+      }
+      if (engine.currentPairingSession?.numericCode == qr.code) {
+        setState(() => _statusError = "That's this device's own QR code. Scan the one on the other device.");
+        return;
+      }
+      await _connectLive(qr.code, qrNonce: qr.nonce, host: qr.host, port: qr.port);
+      return;
+    }
+
     setState(() => _isConnecting = true);
 
     final success = await engine.pairWithQrPayload(payload);
@@ -175,6 +205,45 @@ class _PairingViewState extends State<PairingView> {
         _statusSuccess = null;
       });
     }
+  }
+
+  /// Real networking is running (not the demo used by tests and static previews).
+  bool _isLive(TransferEngine engine) => engine.peerLink != null || ConnectionManager.instance.isStarted;
+
+  Future<void> _connectLive(String code, {String? qrNonce, String? host, int? port}) async {
+    final manager = ConnectionManager.instance;
+    setState(() {
+      _statusError = null;
+      _statusSuccess = null;
+      _isConnecting = true;
+    });
+    final device = await manager.connectWithCode(code, qrNonce: qrNonce, host: host, port: port);
+    if (!mounted) return;
+    setState(() => _isConnecting = false);
+    _onLiveResult(device);
+  }
+
+  void _onLiveResult(DeviceModel? device) {
+    if (device == null || !mounted) return;
+    _codeController.clear();
+    _qrPayloadController.clear();
+    HapticFeedback.mediumImpact();
+    final code = device.verificationCode;
+    setState(() {
+      _statusSuccess = 'Connected to ${device.name} (${device.method.description}).'
+          '${code != null ? ' Check that it shows the verification code $code.' : ''}';
+    });
+  }
+
+  Future<void> _scanWithCamera() async {
+    final value = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const QrScannerPage()));
+    if (value == null || !mounted) return;
+    _qrPayloadController.text = value;
+    await _connectWithQrPayload(value);
+  }
+
+  void _openNearby() {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NearbyDevicesScreen()));
   }
 
   void _handleRegenerate() {
@@ -269,6 +338,7 @@ class _PairingViewState extends State<PairingView> {
               // Section 3: Connected Devices List
               _buildConnectedDevicesSection(engine),
               const SizedBox(height: 24),
+              _buildActiveTransfers(engine),
             ],
           ),
         ),
@@ -357,7 +427,7 @@ class _PairingViewState extends State<PairingView> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Pair QuickShare Studio with nearby devices using either a temporary QR code or a six-digit code. Codes are strictly session-bound and expire when the app closes or is regenerated.',
+                  'Connect another device with a QR code or a six-digit code: on the same Wi-Fi, over the internet, or nearby over Bluetooth. Codes work once and expire after 5 minutes.',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 12.5,
@@ -374,6 +444,15 @@ class _PairingViewState extends State<PairingView> {
   }
 
   /// Section 1: Two Ways to Pair (Show QR Code OR Show Six-Digit Code)
+  Widget _codeStatus(dynamic session) {
+    final engine = context.read<TransferEngine>();
+    if (!_isLive(engine)) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: CodeStatusBar(session: session, lanAvailable: engine.peerLink?.isAvailable ?? false),
+    );
+  }
+
   Widget _buildShareCredentialsCard(dynamic session, bool isSessionActive) {
     return Container(
       decoration: BoxDecoration(
@@ -405,6 +484,7 @@ class _PairingViewState extends State<PairingView> {
             ),
           ),
           const SizedBox(height: 16),
+          _codeStatus(session),
 
           // Two Ways to Pair Switcher Tabs
           Container(
@@ -789,6 +869,11 @@ class _PairingViewState extends State<PairingView> {
                   ),
                 ),
               ),
+              IconButton(
+                tooltip: 'How connecting works',
+                onPressed: () => showMethodsIntro(context),
+                icon: Icon(Icons.help_outline_rounded, color: _softLightGray, size: 20),
+              ),
             ],
           ),
           const SizedBox(height: 6),
@@ -910,13 +995,8 @@ class _PairingViewState extends State<PairingView> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          // Interactive QR Scanner Camera Simulator
-                          final sampleQr = 'quickshare://pair?code=883192&sid=pair_sim_${DateTime.now().millisecondsSinceEpoch}&host=192.168.1.115&port=8088&name=Pixel+8+Pro&platform=Android';
-                          _qrPayloadController.text = sampleQr;
-                          _connectWithQrPayload(sampleQr);
-                        },
+                      if (cameraScanSupported) ElevatedButton.icon(
+                        onPressed: _scanWithCamera,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: _panelCharcoal,
                           foregroundColor: _limeAccent,
@@ -1032,6 +1112,38 @@ class _PairingViewState extends State<PairingView> {
               ),
             ),
 
+          if (_isLive(engine))
+            ListenableBuilder(
+              listenable: ConnectionManager.instance,
+              builder: (context, _) {
+                final manager = ConnectionManager.instance;
+                return ConnectStatusPanel(
+                  state: manager.connectState,
+                  onCancel: () {
+                    manager.cancelConnect();
+                    setState(() => _isConnecting = false);
+                  },
+                  onTryInternet: () async {
+                    setState(() => _isConnecting = true);
+                    final device = await manager.tryInternet();
+                    if (!mounted) return;
+                    setState(() => _isConnecting = false);
+                    _onLiveResult(device);
+                  },
+                  onUseBluetooth: _openNearby,
+                  onRetry: () async {
+                    setState(() => _isConnecting = true);
+                    final device = await manager.retryConnect();
+                    if (!mounted) return;
+                    setState(() => _isConnecting = false);
+                    _onLiveResult(device);
+                  },
+                  bluetoothAvailable: BluetoothSupport.platformSupported,
+                  bluetoothUnavailableReason: BluetoothSupport.unsupportedReason,
+                );
+              },
+            ),
+
           // Pair / Connect Action Button
           SizedBox(
             width: double.infinity,
@@ -1091,7 +1203,8 @@ class _PairingViewState extends State<PairingView> {
                 SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Temporary credentials: Codes expire as soon as the app closes. Reopening QuickShare Studio creates fresh credentials and invalidates previous sessions.',
+                    'Temporary credentials: a code works once and expires after 5 minutes (or after 5 failed attempts). '
+                    'Connections are end-to-end encrypted, and files are only received after you tap Accept.',
                     style: TextStyle(
                       fontFamily: 'Poppins',
                       fontSize: 11.5,
@@ -1218,6 +1331,36 @@ class _PairingViewState extends State<PairingView> {
     );
   }
 
+  /// Real transfers (with method, speed, ETA and Cancel / Resume / Retry).
+  Widget _buildActiveTransfers(TransferEngine engine) {
+    final transfers = engine.activeTransfers.where((t) => t.method != null).take(8).toList();
+    if (transfers.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.swap_vert_rounded, color: _limeAccent, size: 20),
+            const SizedBox(width: 8),
+            Text('Transfers', style: TextStyle(fontFamily: 'Poppins', fontSize: 16, fontWeight: FontWeight.w700, color: _primaryText)),
+            const Spacer(),
+            if (transfers.any((t) => t.status == TransferStatus.completed || t.status == TransferStatus.cancelled))
+              TextButton(
+                onPressed: engine.clearFinishedTransfers,
+                child: const Text('Clear finished', style: TextStyle(fontFamily: 'Poppins', fontSize: 12)),
+              ),
+          ]),
+          const SizedBox(height: 12),
+          for (final t in transfers) ...[
+            TransferProgressTile(item: t, engine: engine),
+            const SizedBox(height: 10),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmptyDevicesCard(TransferEngine engine) {
     return Container(
       width: double.infinity,
@@ -1261,8 +1404,8 @@ class _PairingViewState extends State<PairingView> {
           ),
           const SizedBox(height: 18),
 
-          // Helper simulation buttons to verify pairing functionality
-          Wrap(
+          // Demo mode only: these add simulated devices, which would mislead in the real app.
+          if (!_isLive(engine)) Wrap(
             spacing: 8,
             runSpacing: 8,
             alignment: WrapAlignment.center,
@@ -1422,6 +1565,10 @@ class _PairingViewState extends State<PairingView> {
                         shape: BoxShape.circle,
                       ),
                     ),
+                    if (device.method != TransferMethod.lan || device.verificationCode != null) ...[
+                      MethodBadge(device.method, compact: true, relayed: ConnectionManager.instance.links[device.id]?.relayed ?? false),
+                      if (device.verificationCode != null) VerificationCodeChip(device.verificationCode!),
+                    ],
                     Text(
                       isOnline ? 'Online • Connected' : 'Offline',
                       style: TextStyle(
@@ -1431,7 +1578,12 @@ class _PairingViewState extends State<PairingView> {
                         color: isOnline ? _limeAccent : _softLightGray,
                       ),
                     ),
-                    Text(
+                    if ((ConnectionManager.instance.links[device.id]?.bytesPerSecond ?? 0) > 0)
+                      Text(
+                        '•  ${FormatUtils.formatSpeed(ConnectionManager.instance.links[device.id]!.bytesPerSecond)}',
+                        style: TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w600, color: _limeAccent),
+                      ),
+                    if (device.method == TransferMethod.lan) Text(
                       '•  ${device.ip}:${device.port}',
                       style: TextStyle(
                         fontFamily: 'Poppins',

@@ -2,33 +2,31 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/io.dart';
 import '../models/device_model.dart';
-import '../models/transfer_item.dart';
-import '../models/history_record.dart';
-import '../models/received_item_model.dart';
-import '../../core/utils/hash_utils.dart';
-import '../../core/utils/file_utils.dart';
 import '../../core/constants.dart';
+import '../../transfer/channel.dart';
+import '../../transfer/lan/ws_frame_channel.dart';
 import 'peer_link.dart';
 import 'transfer_engine.dart';
 
-/// Native implementation of the LAN peer protocol (v1), shared with the desktop app's
+/// Native implementation of the LAN peer protocol (v2), shared with the desktop app's
 /// `scripts/server.py`:
 ///
 ///   UDP  [AppConstants.discoveryPort]  "QUICKSHARE_DISCOVER_V1" -> JSON device info
 ///   HTTP [AppConstants.defaultHttpPort] GET /api/ping, /api/device-info
 ///        POST /api/pair      {code,id,name,platform,port} -> {token,...} when the code matches
-///        POST /api/transfer  file body; requires x-sender-id + x-pair-token from pairing
+///        GET  /api/v2/session?from=ID   WebSocket for paired devices; carries the
+///             end-to-end encrypted transfer protocol (see lib/transfer/)
 class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
   static final CrossDeviceTransferService _instance = CrossDeviceTransferService._internal();
   factory CrossDeviceTransferService() => _instance;
 
   CrossDeviceTransferService._internal();
 
-  static const int protocolVersion = 1;
+  static const int protocolVersion = 2;
   static const String discoverMessage = 'QUICKSHARE_DISCOVER_V1';
   static const int _pairFailureLimit = 8;
   static const Duration _pairFailureWindow = Duration(minutes: 5);
@@ -42,6 +40,13 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
 
   /// Pairing tokens by peer device id (the same token is used in both directions).
   final Map<String, String> _peerTokens = {};
+  final _incomingSessions = StreamController<IncomingLanSession>.broadcast();
+
+  @override
+  Stream<IncomingLanSession> get incomingSessions => _incomingSessions.stream;
+
+  @override
+  String? pairingToken(String peerId) => _peerTokens[peerId];
   final Map<String, List<DateTime>> _pairFailures = {};
 
   int get activePort => _activePort;
@@ -226,8 +231,12 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
             await _writeJson(request, HttpStatus.ok, _deviceInfo());
           } else if (path == '/api/pair' && request.method == 'POST') {
             await _handlePairRequest(request, engine);
+          } else if (path == '/api/v2/session' && request.method == 'GET') {
+            await _handleSession(request);
           } else if (path == '/api/transfer' && request.method == 'POST') {
-            await _handleInboundTransfer(request, engine);
+            // Protocol v1 sent files without asking and without encryption.
+            await request.drain<void>();
+            await _writeJson(request, 426, {'error': 'This device runs QuickShare 2. Update QuickShare on the sending device.'});
           } else if (path == '/api/ping' && request.method == 'GET') {
             await _writeJson(request, HttpStatus.ok, {'status': 'ok'});
           } else {
@@ -294,60 +303,20 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
     await _writeJson(request, HttpStatus.ok, {..._deviceInfo(), 'status': 'paired', 'token': token});
   }
 
-  /// Inbound file reception handler: only paired devices may send.
-  Future<void> _handleInboundTransfer(HttpRequest request, TransferEngine engine) async {
-    final senderId = request.headers.value('x-sender-id') ?? '';
-    final token = request.headers.value('x-pair-token') ?? '';
-    final expectedToken = _peerTokens[senderId];
-    if (expectedToken == null || token.isEmpty || token != expectedToken) {
-      await request.drain<void>();
+  /// A paired device opens an encrypted transfer session (WebSocket).
+  Future<void> _handleSession(HttpRequest request) async {
+    final peerId = request.uri.queryParameters['from'] ?? '';
+    if (!_peerTokens.containsKey(peerId) || !WebSocketTransformer.isUpgradeRequest(request)) {
       await _writeJson(request, HttpStatus.unauthorized, {'error': 'not paired with this device'});
       return;
     }
-
-    final rawFileName = request.headers.value('x-file-name') ?? 'Received_File';
-    final fileName = Uri.decodeComponent(rawFileName);
-    final rawSender = request.headers.value('x-sender-name') ?? 'Remote Device';
-    final senderName = Uri.decodeComponent(rawSender);
-    final senderPlatform = request.headers.value('x-sender-platform') ?? 'Universal';
-    final expectedSha256 = request.headers.value('x-sha256');
-
-    // Read bytes from the request stream
-    final builder = BytesBuilder(copy: false);
-    await for (final chunk in request) {
-      builder.add(chunk);
-    }
-    final fileBytes = builder.takeBytes();
-
-    // Verify SHA-256 integrity
-    final calculatedSha256 = HashUtils.computeSha256(fileBytes);
-    if (expectedSha256 != null && expectedSha256.isNotEmpty && calculatedSha256 != expectedSha256) {
-      await _writeJson(request, HttpStatus.badRequest, {
-        'status': 'error',
-        'message': 'Checksum mismatch: expected $expectedSha256, got $calculatedSha256',
-      });
+    final socket = await WebSocketTransformer.upgrade(request);
+    final channel = WebSocketFrameChannel(IOWebSocketChannel(socket));
+    if (!_incomingSessions.hasListener) {
+      await channel.close();
       return;
     }
-
-    engine.receiveIncomingTransfer(
-      senderDeviceName: '$senderName ($senderPlatform)',
-      fileName: fileName,
-      bytes: fileBytes,
-      fileType: FileUtils.isPdfFilename(fileName)
-          ? ReceivedFileType.pdf
-          : FileUtils.isImageFilename(fileName)
-              ? ReceivedFileType.image
-              : ReceivedFileType.other,
-      isFromTrustedDevice: true,
-      recordInHistory: true,
-    );
-
-    await _writeJson(request, HttpStatus.ok, {
-      'status': 'success',
-      'fileName': fileName,
-      'bytesReceived': fileBytes.length,
-      'sha256': calculatedSha256,
-    });
+    _incomingSessions.add(IncomingLanSession(channel, peerId));
   }
 
   String _newToken() {
@@ -476,7 +445,8 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
       id: data['id'] as String?,
       name: data['name'] as String? ?? 'Remote Device',
       ip: host,
-      port: (data['port'] as num?)?.toInt() ?? port,
+      // Keep the address that answered: behind port forwarding the advertised port is wrong.
+      port: port,
       platform: platform,
       deviceType: _parseDeviceType(platform),
       isTrusted: true,
@@ -520,132 +490,33 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
   }
 
   @override
-  Future<void> sendFile(
-    DeviceModel peer,
-    String fileName,
-    Uint8List bytes, {
-    void Function(double progress)? onProgress,
-  }) async {
-    final token = _peerTokens[peer.id];
-    if (token == null) {
+  Future<FrameChannel> openSession(DeviceModel peer) async {
+    if (!_peerTokens.containsKey(peer.id)) {
       throw PeerLinkException('"${peer.name}" is not paired with this device. Pair again from Device Pairing.');
     }
-    final engine = TransferEngine();
-    final request = http.StreamedRequest('POST', Uri.parse('http://${peer.ip}:${peer.port}/api/transfer'))
-      ..headers.addAll({
-        'x-file-name': Uri.encodeComponent(fileName),
-        'x-file-size': bytes.length.toString(),
-        'x-sender-id': engine.localDeviceId,
-        'x-sender-name': Uri.encodeComponent(engine.localDeviceName),
-        'x-sender-platform': currentPlatformName,
-        'x-pair-token': token,
-        'x-sha256': HashUtils.computeSha256(bytes),
-        'Content-Type': 'application/octet-stream',
-      })
-      ..contentLength = bytes.length;
-
-    Future<void> feed() async {
-      const chunkSize = 64 * 1024;
-      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-        final end = min(offset + chunkSize, bytes.length);
-        request.sink.add(bytes.sublist(offset, end));
-        onProgress?.call(end / bytes.length);
-        await Future<void>.delayed(Duration.zero);
-      }
-      await request.sink.close();
-    }
-
+    final uri = Uri(
+      scheme: 'ws',
+      host: peer.ip,
+      port: peer.port,
+      path: '/api/v2/session',
+      queryParameters: {'from': TransferEngine().localDeviceId},
+    );
     try {
-      unawaited(feed());
-      final response = await request.send().timeout(Duration(seconds: 30 + bytes.length ~/ (256 * 1024)));
-      final body = await response.stream.bytesToString();
-      if (response.statusCode == HttpStatus.unauthorized) {
+      final socket = await WebSocket.connect(uri.toString()).timeout(const Duration(seconds: 5));
+      return WebSocketFrameChannel(IOWebSocketChannel(socket));
+    } on WebSocketException catch (e) {
+      if (e.message.contains('401')) {
         throw PeerLinkException('"${peer.name}" no longer recognises this device. Pair again.');
       }
-      if (response.statusCode != HttpStatus.ok) {
-        throw PeerLinkException('"${peer.name}" rejected the file (HTTP ${response.statusCode}): $body');
+      if (e.message.contains('426') || e.message.contains('404')) {
+        throw PeerLinkException('"${peer.name}" runs an older QuickShare. Update it to send files.');
       }
-    } on PeerLinkException {
-      rethrow;
+      throw PeerLinkException(_unreachable(peer));
     } catch (_) {
-      throw PeerLinkException(
-        'Could not reach "${peer.name}" at ${peer.ip}:${peer.port}. '
-        'Ensure both devices are on the same Wi-Fi / hotspot network and QuickShare Studio is open.',
-      );
+      throw PeerLinkException(_unreachable(peer));
     }
   }
 
-  /// Sends a file and tracks it as a transfer in [TransferEngine] (progress + history).
-  Future<TransferItem> sendFileCrossPlatform({
-    required DeviceModel recipient,
-    required String fileName,
-    required Uint8List bytes,
-    String? sessionName,
-  }) async {
-    final engine = TransferEngine();
-    final sanitized = FileUtils.sanitizeFilename(fileName);
-    final sha256Hash = HashUtils.computeSha256(bytes);
-    final totalChunks = (bytes.length / AppConstants.chunkSize).ceil().clamp(1, 999999);
-
-    final transfer = TransferItem(
-      fileName: sanitized,
-      fileSizeBytes: bytes.length,
-      fileType: FileUtils.isPdfFilename(sanitized)
-          ? TransferFileType.pdf
-          : FileUtils.isImageFilename(sanitized)
-              ? TransferFileType.image
-              : TransferFileType.other,
-      sha256: sha256Hash,
-      totalChunks: totalChunks,
-      isSender: true,
-      peerDeviceName: recipient.name,
-      peerDeviceId: recipient.id,
-      sessionName: sessionName,
-      connectionType: 'Local Network (${recipient.platform ?? "Device"})',
-      rawBytes: bytes,
-      status: TransferStatus.transferring,
-    );
-
-    engine.fileDataStore[sanitized] = bytes;
-    engine.fileDataStore[sha256Hash] = bytes;
-    engine.addActiveTransfer(transfer);
-
-    void update(TransferItem Function(TransferItem t) change) {
-      final idx = engine.activeTransfers.indexWhere((t) => t.transferId == transfer.transferId);
-      if (idx != -1) engine.updateTransfer(change(engine.activeTransfers[idx]));
-    }
-
-    final startTime = DateTime.now();
-    try {
-      await sendFile(recipient, sanitized, bytes, onProgress: (progress) {
-        final elapsed = DateTime.now().difference(startTime).inMilliseconds;
-        update((t) => t.copyWith(
-              transferredChunks: (progress * totalChunks).floor(),
-              progress: progress,
-              speedBytesPerSec: elapsed > 0 ? bytes.length * progress / (elapsed / 1000) : 0,
-            ));
-      });
-      update((t) => t.copyWith(
-            transferredChunks: totalChunks,
-            progress: 1.0,
-            status: TransferStatus.completed,
-            completedTime: DateTime.now(),
-          ));
-      engine.addHistoryRecord(HistoryRecord(
-        fileName: sanitized,
-        fileSize: bytes.length,
-        senderName: engine.localDeviceName,
-        recipientName: '${recipient.name} (${recipient.platform ?? "Peer"})',
-        isIncoming: false,
-        status: 'completed',
-        sha256: sha256Hash,
-        sessionName: sessionName,
-        connectionType: transfer.connectionType,
-      ));
-      return transfer;
-    } on PeerLinkException catch (e) {
-      update((t) => t.copyWith(status: TransferStatus.failed, errorMessage: e.message));
-      rethrow;
-    }
-  }
+  String _unreachable(DeviceModel peer) => 'Could not reach "${peer.name}" on this network. '
+      'Make sure both devices are on the same Wi-Fi and QuickShare is open.';
 }

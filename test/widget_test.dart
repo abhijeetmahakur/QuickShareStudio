@@ -1795,7 +1795,7 @@ void main() {
       engine.stopTimers();
       updateService.resetTestingState();
 
-      await updateService.publishNewVersion(version: '2.0.0', simulateLatency: false);
+      await updateService.publishNewVersion(version: '2.1.0', simulateLatency: false);
 
       // Preserve custom device name and data before update
       engine.setCustomDeviceName('Lab_Main_Workstation');
@@ -1835,7 +1835,7 @@ void main() {
       expect(success, isTrue);
       expect(updateCompleted, isTrue);
       expect(updateService.status, UpdateStatus.applied);
-      expect(updateService.currentVersion, '2.0.0');
+      expect(updateService.currentVersion, '2.1.0');
 
       // 3. Confirm all user settings and session data remain 100% intact
       expect(engine.localDeviceName, 'Lab_Main_Workstation');

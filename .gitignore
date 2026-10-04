@@ -68,3 +68,16 @@ __pycache__/
 /scripts/validate-*
 /scripts/search_repo.*
 /scripts/setup_search.*
+
+# Local secrets: TURN credentials etc. (see .env.example). Never commit these.
+.env
+.env.*
+!.env.example
+# Android release signing
+*.jks
+*.keystore
+/android/key.properties
+
+# E2E harness dependencies
+/tool/e2e/node_modules/
+/tool/e2e/package-lock.json
