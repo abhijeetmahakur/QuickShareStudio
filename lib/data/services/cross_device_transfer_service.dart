@@ -445,7 +445,8 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
       id: data['id'] as String?,
       name: data['name'] as String? ?? 'Remote Device',
       ip: host,
-      port: (data['port'] as num?)?.toInt() ?? port,
+      // Keep the address that answered: behind port forwarding the advertised port is wrong.
+      port: port,
       platform: platform,
       deviceType: _parseDeviceType(platform),
       isTrusted: true,

@@ -689,7 +689,8 @@ def pair_direct(ip, port, code):
     peer = {
         "id": reply.get("id") or f"{ip}:{port}", "name": reply.get("name") or "Device",
         "platform": reply.get("platform") or "Device", "ip": ip,
-        "port": int(reply.get("port") or port), "token": reply["token"],
+        # Keep the address that answered: behind port forwarding the advertised port is wrong.
+        "port": int(port), "token": reply["token"],
     }
     LAN.remember_peer(peer)
     return peer

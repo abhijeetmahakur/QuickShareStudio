@@ -7,6 +7,7 @@ import '../../../core/constants.dart';
 import '../../../core/design/tokens.dart';
 import '../../../data/models/pairing_session.dart';
 import '../../../transfer/connection_manager.dart';
+import '../../../transfer/transfer_settings.dart';
 
 /// Countdown to the code's expiry plus where this device can be reached with it.
 class CodeStatusBar extends StatefulWidget {
@@ -84,7 +85,11 @@ class _CodeStatusBarState extends State<CodeStatusBar> {
               : (manager?.hostStatus ?? 'Connecting to the internet service...'),
           child: pill(
             Icons.public_rounded,
-            internetOk ? 'Internet' : (internetStarting ? 'Internet...' : 'Internet off'),
+            internetOk
+                ? 'Internet'
+                : internetStarting
+                    ? 'Internet...'
+                    : (TransferSettings.instance.internetEnabled ? 'Internet unavailable' : 'Internet off'),
             internetOk ? const Color(0xFF60A5FA) : AppColors.mutedText,
             internetOk ? 'Reachable over the internet' : 'Not reachable over the internet',
           ),

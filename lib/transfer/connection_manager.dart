@@ -109,6 +109,8 @@ class ConnectionManager extends ChangeNotifier {
   final Map<String, InternetHost> _resumeHosts = {};
   bool _started = false;
   StreamSubscription<IncomingLanSession>? _lanSub;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  Timer? _rehostTimer;
 
   /// Overridable for tests.
   Future<bool> Function() isOnline = _checkOnline;
@@ -157,6 +159,19 @@ class ConnectionManager extends ChangeNotifier {
     if (link != null) attachLan(link);
     final session = _engine.currentPairingSession;
     if (session != null) unawaited(hostCode(session));
+    // Coming back online (or the service recovering) makes the code reachable again.
+    try {
+      _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+        if (results.any((r) => r != ConnectivityResult.none)) _rehost();
+      });
+    } catch (_) {}
+    _rehostTimer = Timer.periodic(const Duration(seconds: 30), (_) => _rehost());
+  }
+
+  void _rehost() {
+    final session = _engine.currentPairingSession;
+    if (!settings.internetEnabled || _hosting || isHostingInternet || session == null || session.isExpired) return;
+    unawaited(hostCode(session));
   }
 
   // -------------------------------------------------------------------------------------
@@ -851,6 +866,8 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Everything off: used when the app closes or the user ends all sessions.
   Future<void> shutdown() async {
+    await _connectivitySub?.cancel();
+    _rehostTimer?.cancel();
     await flow.cancel(silent: true);
     await stopHosting();
     for (final h in _resumeHosts.values) {
