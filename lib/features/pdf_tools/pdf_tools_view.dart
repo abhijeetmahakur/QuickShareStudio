@@ -1,12 +1,16 @@
-import 'dart:typed_data';
+import '../../core/services/ocr_service.dart';
+import 'package:flutter/services.dart';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:archive/archive.dart';
+import 'package:image/image.dart' as img;
 import 'package:file_picker/file_picker.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:provider/provider.dart';
 import '../../core/services/file_actions.dart';
+import '../../core/services/pdf_pages.dart';
 import '../../core/utils/format_utils.dart';
 import '../../core/utils/file_utils.dart';
 import '../../core/constants.dart';
@@ -138,9 +142,11 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
 
   // OCR State
   PdfToolFile? _ocrFile;
-  String _ocrLanguage = 'English + Code';
+  String _ocrLanguage = OcrService.languages.keys.first;
   bool _isProcessingOcr = false;
-  String? _recognizedSampleText;
+  String? _ocrProgress;
+  OcrResult? _ocrResult;
+  String? _ocrError;
 
   // Multi-File Converter Queue State
   final List<ConverterQueueItem> _converterQueue = [];
@@ -369,84 +375,28 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
       type: FileType.custom,
       allowedExtensions: ['pdf'],
     );
-    if (files.isNotEmpty) {
-      for (final f in files) {
-        final bytes = await f.readAsBytes();
-        final len = (await f.length()) ?? bytes.length;
-        int pageCount = 1;
-        try {
-          final rasterStream = Printing.raster(bytes, dpi: 72);
-          final count = await rasterStream.length;
-          if (count > 0) pageCount = count;
-        } catch (_) {
-          pageCount = 1;
-        }
-        setState(() => _mergeFiles.add(PdfToolFile(name: f.name, size: len, bytes: bytes, pageCount: pageCount)));
-      }
-    }
-  }
-
-  /// Builds a real, fully standard-compliant PDF from rasterized pages or synthesized pages
-  Future<Uint8List> _buildMergedPdf(List<PdfToolFile> files) async {
-    final doc = pw.Document();
-
-    for (final file in files) {
-      bool addedAny = false;
+    final unreadable = <String>[];
+    for (final f in files) {
+      final bytes = await f.readAsBytes();
+      final len = (await f.length()) ?? bytes.length;
       try {
-        await for (final page in Printing.raster(file.bytes, dpi: 150)) {
-          final pngBytes = await page.toPng();
-          final image = pw.MemoryImage(pngBytes);
-          doc.addPage(
-            pw.Page(
-              pageFormat: PdfPageFormat(page.width.toDouble(), page.height.toDouble()),
-              margin: pw.EdgeInsets.zero,
-              build: (pw.Context context) {
-                return pw.FullPage(
-                  ignoreMargins: true,
-                  child: pw.Image(image, fit: pw.BoxFit.fill),
-                );
-              },
-            ),
-          );
-          addedAny = true;
-        }
+        final pageCount = await PdfPages.pageCount(bytes);
+        if (!mounted) return;
+        setState(() => _mergeFiles.add(PdfToolFile(name: f.name, size: len, bytes: bytes, pageCount: pageCount)));
       } catch (_) {
-        addedAny = false;
-      }
-
-      if (!addedAny) {
-        // Fallback: create high quality clean page for this document
-        doc.addPage(
-          pw.Page(
-            pageFormat: PdfPageFormat.a4,
-            build: (pw.Context context) {
-              return pw.Container(
-                padding: const pw.EdgeInsets.all(32),
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text(
-                      'Document: ${file.name}',
-                      style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
-                    ),
-                    pw.SizedBox(height: 12),
-                    pw.Text('Merged into Unified Submission PDF'),
-                    pw.SizedBox(height: 8),
-                    pw.Text('Source Size: ${FormatUtils.formatBytes(file.size)}'),
-                    pw.Divider(),
-                    pw.SizedBox(height: 16),
-                    pw.Text('Content preserved and validated for university submission.'),
-                  ],
-                ),
-              );
-            },
-          ),
-        );
+        unreadable.add(f.name);
       }
     }
-
-    return await doc.save();
+    if (unreadable.isNotEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Skipped unreadable or damaged PDF: ${unreadable.join(', ')}')),
+      );
+    }
   }
+
+  /// Concatenates the selected PDFs page-for-page. Throws if any file cannot be read.
+  Future<Uint8List> _buildMergedPdf(List<PdfToolFile> files) =>
+      PdfPages.merge([for (final f in files) f.bytes]);
 
   Future<void> _executeMerge() async {
     if (_mergeFiles.length < 2) {
@@ -492,28 +442,32 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
 
   Future<void> _pickSplitSourcePdf() async {
     final files = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
-    if (files.isNotEmpty) {
-      final f = files.first;
-      final bytes = await f.readAsBytes();
-      final len = (await f.length()) ?? bytes.length;
-      int pageCount = 5; // sensible default
-      try {
-        final count = await Printing.raster(bytes, dpi: 72).length;
-        if (count > 0) pageCount = count;
-      } catch (_) {
-        pageCount = 5;
+    if (files.isEmpty) return;
+    final f = files.first;
+    final bytes = await f.readAsBytes();
+    final len = (await f.length()) ?? bytes.length;
+    final int pageCount;
+    try {
+      pageCount = await PdfPages.pageCount(bytes);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('"${f.name}" is not a readable PDF.')),
+        );
       }
-
-      final baseName = f.name.replaceAll('.pdf', '');
-      _sourcePdfNameController.text = f.name;
-      _batchPrefixController.text = baseName;
-
-      setState(() {
-        _splitFile = PdfToolFile(name: f.name, size: len, bytes: bytes, pageCount: pageCount);
-        _splitResults.clear();
-        _applyBatchPrefix(baseName);
-      });
+      return;
     }
+    if (!mounted) return;
+
+    final baseName = f.name.replaceAll(RegExp(r'\.pdf$', caseSensitive: false), '');
+    _sourcePdfNameController.text = f.name;
+    _batchPrefixController.text = baseName;
+
+    setState(() {
+      _splitFile = PdfToolFile(name: f.name, size: len, bytes: bytes, pageCount: pageCount);
+      _splitResults.clear();
+      _applyBatchPrefix(baseName);
+    });
   }
 
   Future<void> _executeMultiSplit() async {
@@ -528,85 +482,30 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
     _splitResults.clear();
 
     try {
-      // First, rasterize all pages of the source PDF into a list
-      final List<Uint8List> sourcePageImages = [];
-      try {
-        await for (final page in Printing.raster(_splitFile!.bytes, dpi: 150)) {
-          final png = await page.toPng();
-          sourcePageImages.add(png);
-        }
-      } catch (_) {
-        // Fallback dummy images if raster is unsupported in current platform
-      }
+      final totalPages = _splitFile!.pageCount;
 
-      final totalDetected = sourcePageImages.isNotEmpty ? sourcePageImages.length : _splitFile!.pageCount;
-
+      // Validate every part before producing anything.
+      final partPages = <List<int>>[];
       for (int i = 0; i < _splitConfigs.length; i++) {
         final config = _splitConfigs[i];
         _parsePagesIntoSet(config);
-
-        final targetPages = config.selectedPages.isNotEmpty
-            ? (config.selectedPages.toList()..sort())
-            : [i + 1];
-
-        final outDoc = pw.Document();
-
-        for (final pageNum in targetPages) {
-          final zeroIdx = pageNum - 1;
-          if (zeroIdx >= 0 && zeroIdx < sourcePageImages.length) {
-            final img = pw.MemoryImage(sourcePageImages[zeroIdx]);
-            outDoc.addPage(
-              pw.Page(
-                pageFormat: PdfPageFormat.a4,
-                margin: pw.EdgeInsets.zero,
-                build: (pw.Context ctx) => pw.FullPage(
-                  ignoreMargins: true,
-                  child: pw.Image(img, fit: pw.BoxFit.fill),
-                ),
-              ),
-            );
-          } else {
-            // Synthesize valid standard page
-            outDoc.addPage(
-              pw.Page(
-                pageFormat: PdfPageFormat.a4,
-                build: (pw.Context ctx) => pw.Container(
-                  padding: const pw.EdgeInsets.all(32),
-                  child: pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Text(
-                        config.nameController.text.trim().isEmpty ? 'Split Document Part ${i + 1}' : config.nameController.text.trim(),
-                        style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
-                      ),
-                      pw.SizedBox(height: 8),
-                      pw.Text('Extracted from: ${_splitFile!.name}'),
-                      pw.Text('Source Page: $pageNum of $totalDetected'),
-                      pw.Divider(),
-                      pw.SizedBox(height: 24),
-                      pw.Container(
-                        height: 200,
-                        width: double.infinity,
-                        alignment: pw.Alignment.center,
-                        decoration: pw.BoxDecoration(
-                          border: pw.Border.all(color: PdfColors.grey400),
-                          borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
-                        ),
-                        child: pw.Text(
-                          'Page $pageNum Content\nClean, compliant PDF verified',
-                          textAlign: pw.TextAlign.center,
-                          style: const pw.TextStyle(color: PdfColors.grey700),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }
+        final pages = config.selectedPages.toList()..sort();
+        if (pages.isEmpty) {
+          throw _SplitInputError('Part ${i + 1}: enter the pages to include (e.g. 1-3, 5).');
         }
+        final missing = pages.where((p) => p < 1 || p > totalPages).toList();
+        if (missing.isNotEmpty) {
+          throw _SplitInputError(
+            'Part ${i + 1}: page ${missing.join(', ')} does not exist — "${_splitFile!.name}" has $totalPages pages.',
+          );
+        }
+        partPages.add(pages);
+      }
 
-        final outBytes = await outDoc.save();
+      for (int i = 0; i < _splitConfigs.length; i++) {
+        final config = _splitConfigs[i];
+        final targetPages = partPages[i];
+        final outBytes = await PdfPages.extractPages(_splitFile!.bytes, targetPages);
         String outName = config.nameController.text.trim();
         if (!outName.toLowerCase().endsWith('.pdf')) {
           outName += '.pdf';
@@ -627,10 +526,11 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
         );
       }
     } catch (e) {
+      _splitResults.clear();
       setState(() => _isSplitting = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error splitting PDF: $e')),
+          SnackBar(content: Text(e is _SplitInputError ? e.message : 'Error splitting PDF: $e')),
         );
       }
     }
@@ -654,50 +554,35 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
           break;
       }
 
+      // Re-render each page and store it as a JPEG at the chosen DPI (PNG pages are
+      // lossless and usually made the "compressed" file larger than the original).
+      final quality = dpi >= 150 ? 85 : (dpi >= 100 ? 75 : 60);
       final doc = pw.Document();
-      bool processedAny = false;
-
-      try {
-        await for (final page in Printing.raster(_compressFile!.bytes, dpi: dpi)) {
-          final pngBytes = await page.toPng();
-          final image = pw.MemoryImage(pngBytes);
-          doc.addPage(
-            pw.Page(
-              pageFormat: PdfPageFormat(page.width.toDouble(), page.height.toDouble()),
-              margin: pw.EdgeInsets.zero,
-              build: (pw.Context ctx) => pw.FullPage(
-                ignoreMargins: true,
-                child: pw.Image(image, fit: pw.BoxFit.fill),
-              ),
-            ),
-          );
-          processedAny = true;
-        }
-      } catch (_) {
-        processedAny = false;
-      }
-
-      if (!processedAny) {
-        // Fallback compression wrapper
+      var pageTotal = 0;
+      await for (final page in Printing.raster(_compressFile!.bytes, dpi: dpi)) {
+        final rgba = await page.toImage().then((im) => im.toByteData());
+        final decoded = img.Image.fromBytes(
+          width: page.width,
+          height: page.height,
+          bytes: rgba!.buffer,
+          numChannels: 4,
+        );
+        final jpg = img.encodeJpg(decoded, quality: quality);
         doc.addPage(
           pw.Page(
-            pageFormat: PdfPageFormat.a4,
-            build: (pw.Context ctx) => pw.Container(
-              padding: const pw.EdgeInsets.all(32),
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Text('Optimized & Compressed Document', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-                  pw.SizedBox(height: 8),
-                  pw.Text('Source: ${_compressFile!.name}'),
-                  pw.Text('Profile: $_compressProfile'),
-                  pw.Divider(),
-                  pw.Text('Successfully optimized stream compression and cross-reference table.'),
-                ],
-              ),
+            // Raster size is in pixels at [dpi]; PDF pages are measured in points (1/72 in).
+            pageFormat: PdfPageFormat(page.width * 72 / dpi, page.height * 72 / dpi),
+            margin: pw.EdgeInsets.zero,
+            build: (pw.Context ctx) => pw.FullPage(
+              ignoreMargins: true,
+              child: pw.Image(pw.MemoryImage(jpg), fit: pw.BoxFit.fill),
             ),
           ),
         );
+        pageTotal++;
+      }
+      if (pageTotal == 0) {
+        throw Exception('could not read any pages from "${_compressFile!.name}"');
       }
 
       final compressed = await doc.save();
@@ -709,9 +594,12 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Compressed PDF ready! (${FormatUtils.formatBytes(compressed.length)})')),
-        );
+        final original = _compressFile!.size;
+        final message = compressed.length < original
+            ? 'Compressed PDF ready: ${FormatUtils.formatBytes(original)} → ${FormatUtils.formatBytes(compressed.length)}'
+            : 'This PDF is already compact — the result (${FormatUtils.formatBytes(compressed.length)}) is not smaller '
+                'than the original (${FormatUtils.formatBytes(original)}). Try "Smaller File".';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
     } catch (e) {
       setState(() => _isCompressing = false);
@@ -721,7 +609,7 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
     }
   }
 
-  void _executeOcr() {
+  Future<void> _executeOcr() async {
     if (_ocrFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please choose an image or PDF for OCR processing.')),
@@ -729,22 +617,68 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
       return;
     }
 
-    setState(() => _isProcessingOcr = true);
-    Future.delayed(const Duration(milliseconds: 1400), () {
-      if (mounted) {
-        setState(() {
-          _isProcessingOcr = false;
-          _recognizedSampleText =
-              '// OCR Text Extracted Successfully (Confidence: 98.4%)\n'
-              'public class QuickSharePractical {\n'
-              '    public static void main(String[] args) {\n'
-              '        System.out.println("Lab experiment verified.");\n'
-              '    }\n'
-              '}';
-        });
-      }
+    setState(() {
+      _isProcessingOcr = true;
+      _ocrResult = null;
+      _ocrError = null;
+      _ocrProgress = 'Preparing pages…';
     });
+
+    try {
+      final file = _ocrFile!;
+      final images = <Uint8List>[];
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        await for (final page in Printing.raster(file.bytes, dpi: 200)) {
+          images.add(await page.toPng());
+        }
+        if (images.isEmpty) throw Exception('no pages found in this PDF');
+      } else {
+        images.add(file.bytes);
+      }
+      if (mounted) setState(() => _ocrProgress = 'Loading OCR engine (first run downloads it)…');
+
+      final result = await OcrService.recognize(
+        images,
+        OcrService.languages[_ocrLanguage]!,
+        onProgress: (done, total) {
+          if (mounted) setState(() => _ocrProgress = 'Recognized page $done of $total');
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _isProcessingOcr = false;
+        _ocrResult = result;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessingOcr = false;
+        _ocrError = 'OCR failed: $e';
+      });
+    }
   }
+
+  String get _ocrBaseName => (_ocrFile?.name ?? 'ocr').replaceAll(RegExp(r'\.[^.]+$'), '');
+
+  Future<void> _saveOcrText() => FileActions.runWithSnackBar(
+        context,
+        () => FileActions.save(
+          Uint8List.fromList(utf8.encode(_ocrResult!.text)),
+          '${_ocrBaseName}_text.txt',
+          directory: context.read<TransferEngine>().downloadDirectory,
+        ),
+      );
+
+  Future<void> _saveSearchablePdf() => FileActions.runWithSnackBar(context, () async {
+        final pages = _ocrResult!.pdfPages;
+        final bytes = pages.length == 1 ? pages.first : await PdfPages.merge(pages);
+        if (!mounted) return 'Cancelled';
+        return FileActions.save(
+          bytes,
+          '${_ocrBaseName}_searchable.pdf',
+          directory: context.read<TransferEngine>().downloadDirectory,
+        );
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -2766,7 +2700,9 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
                         children: [
                           Text('Original Size: ${FormatUtils.formatBytes(_compressFile!.size)}', style: const TextStyle(fontWeight: FontWeight.bold)),
                           Text(
-                            'Optimized Size: ${FormatUtils.formatBytes(_compressedEstimatedSize!)} (~${((1 - (_compressedEstimatedSize! / _compressFile!.size)) * 100).clamp(0, 99).round()}% reduction)',
+                            _compressedEstimatedSize! < _compressFile!.size
+                                ? 'Optimized Size: ${FormatUtils.formatBytes(_compressedEstimatedSize!)} (~${((1 - (_compressedEstimatedSize! / _compressFile!.size)) * 100).round()}% smaller)'
+                                : 'Result: ${FormatUtils.formatBytes(_compressedEstimatedSize!)} — not smaller than the original',
                             style: TextStyle(color: AppColors.success, fontWeight: FontWeight.bold),
                           ),
                           const Text('Verified Standard-Compliant PDF (Opens seamlessly)', style: TextStyle(fontSize: 11, color: Colors.grey)),
@@ -2821,7 +2757,11 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
         children: [
           const Text('Optical Character Recognition (Searchable PDF)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 6),
-          Text('Recognizes text inside screenshot code and terminal windows, adding an invisible searchable layer.', style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+          Text(
+            'Recognizes text in screenshots and scanned PDFs, and can save a searchable PDF. '
+            'The OCR engine is downloaded on first use, so an internet connection is needed.',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+          ),
           const SizedBox(height: 20),
 
           ElevatedButton.icon(
@@ -2836,7 +2776,11 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
                 final f = files.first;
                 final bytes = await f.readAsBytes();
                 final len = (await f.length()) ?? bytes.length;
-                setState(() => _ocrFile = PdfToolFile(name: f.name, size: len, bytes: bytes));
+                setState(() {
+                  _ocrFile = PdfToolFile(name: f.name, size: len, bytes: bytes);
+                  _ocrResult = null;
+                  _ocrError = null;
+                });
               }
             },
           ),
@@ -2846,7 +2790,7 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
             DropdownButtonFormField<String>(
               initialValue: _ocrLanguage,
               decoration: const InputDecoration(labelText: 'Recognition Language Model', border: OutlineInputBorder(), isDense: true),
-              items: ['English + Code', 'English (General)', 'Python / C++ Syntax'].map((l) => DropdownMenuItem(value: l, child: Text(l))).toList(),
+              items: OcrService.languages.keys.map((l) => DropdownMenuItem(value: l, child: Text(l))).toList(),
               onChanged: (val) {
                 if (val != null) setState(() => _ocrLanguage = val);
               },
@@ -2863,20 +2807,63 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
             ),
             const SizedBox(height: 20),
 
-            if (_recognizedSampleText != null)
+            if (_isProcessingOcr && _ocrProgress != null)
+              Text(_ocrProgress!, style: TextStyle(color: AppColors.secondaryText, fontSize: 12)),
+            if (_ocrError != null)
+              Text(_ocrError!, style: TextStyle(color: AppColors.error, fontSize: 13)),
+            if (_ocrResult != null) ...[
+              Text(
+                _ocrResult!.text.trim().isEmpty
+                    ? 'No text was found.'
+                    : 'Recognized text · confidence ${_ocrResult!.confidence.round()}%',
+                style: TextStyle(color: AppColors.secondaryText, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
               Container(
                 width: double.infinity,
+                constraints: const BoxConstraints(maxHeight: 360),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: AppColors.cardBg,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: AppColors.white.withValues(alpha: 0.12)),
                 ),
-                child: Text(
-                  _recognizedSampleText!,
-                  style: TextStyle(color: AppColors.secondary, fontFamily: 'monospace', fontSize: 13),
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    _ocrResult!.text,
+                    style: TextStyle(color: AppColors.secondary, fontFamily: 'monospace', fontSize: 13),
+                  ),
                 ),
               ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.copy, size: 16),
+                    label: const Text('Copy Text'),
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: _ocrResult!.text));
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Text copied')));
+                      }
+                    },
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.text_snippet_outlined, size: 16),
+                    label: const Text('Save as .txt'),
+                    onPressed: _saveOcrText,
+                  ),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: AppColors.onLimeText),
+                    icon: const Icon(Icons.picture_as_pdf, size: 16),
+                    label: const Text('Save Searchable PDF'),
+                    onPressed: _saveSearchablePdf,
+                  ),
+                ],
+              ),
+            ],
           ],
         ],
       ),
@@ -3212,4 +3199,9 @@ class _SearchableFormatPickerDialogState extends State<SearchableFormatPickerDia
       ),
     );
   }
+}
+
+class _SplitInputError implements Exception {
+  final String message;
+  _SplitInputError(this.message);
 }

@@ -106,6 +106,28 @@ class _PdfEditorViewState extends State<PdfEditorView> {
     super.dispose();
   }
 
+  void _openExportDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => ExportDialog(
+        project: _project,
+        initialFileName: _pdfFileName,
+        onFileNameChanged: _commitPdfFileName,
+        onSendToDevice: (bytes, name) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Prepared $name for device transmission.',
+                style: const TextStyle(fontFamily: 'Poppins'),
+              ),
+              backgroundColor: cardBg,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   bool _handleGlobalKeyboard(KeyEvent event) {
     if (event is! KeyDownEvent) return false;
     // On web, Ctrl+V must reach the browser so it fires the native paste event
@@ -152,7 +174,8 @@ class _PdfEditorViewState extends State<PdfEditorView> {
   }
 
   Future<void> _checkForDroppedFiles() async {
-    if (!mounted) return;
+    // While another section is shown, leave drops queued instead of consuming them here.
+    if (!mounted || !_isVisible) return;
     try {
       final dropped = await ClipboardImageService.readDroppedImages();
       if (dropped.isNotEmpty) {
@@ -1165,6 +1188,8 @@ class _PdfEditorViewState extends State<PdfEditorView> {
     final screenWidth = MediaQuery.of(context).size.width;
     final isDesktop = screenWidth >= 960;
     final isCompact = screenWidth < 760;
+    // Below this width the labelled toolbar buttons no longer fit next to the file name.
+    final compactToolbar = screenWidth < 1100;
     _isVisible = TickerMode.valuesOf(context).enabled;
 
     // Ctrl+V is handled by _handleGlobalKeyboard (native) and _handleWebPaste (web).
@@ -1316,7 +1341,16 @@ class _PdfEditorViewState extends State<PdfEditorView> {
                 ),
               ],
 
-              // Paste Screenshot (Ctrl+V)
+              // Paste Screenshot (Ctrl+V) — icon-only when the toolbar is narrow
+              if (compactToolbar)
+                IconButton(
+                  key: _pasteButtonKey,
+                  icon: const Icon(Icons.paste_rounded, size: 18),
+                  color: AppColors.primaryAccent,
+                  tooltip: 'Paste screenshot (Ctrl+V)',
+                  onPressed: _handlePasteScreenshot,
+                )
+              else
               ElevatedButton.icon(
                 key: _pasteButtonKey,
                 style: ElevatedButton.styleFrom(
@@ -1337,6 +1371,14 @@ class _PdfEditorViewState extends State<PdfEditorView> {
               const SizedBox(width: 8),
 
               // Add Images
+              if (compactToolbar)
+                IconButton(
+                  icon: const Icon(Icons.add_photo_alternate_rounded, size: 18),
+                  color: limeAccent,
+                  tooltip: 'Add images',
+                  onPressed: _pickImageFiles,
+                )
+              else
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: cardBg,
@@ -1356,7 +1398,15 @@ class _PdfEditorViewState extends State<PdfEditorView> {
               const SizedBox(width: 8),
 
               // Export PDF (Primary Action in Lime Green)
-              ElevatedButton.icon(
+              if (screenWidth < 600)
+                IconButton.filled(
+                  style: IconButton.styleFrom(backgroundColor: limeAccent, foregroundColor: darkText),
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  tooltip: 'Export PDF',
+                  onPressed: _openExportDialog,
+                )
+              else
+                              ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: limeAccent,
                   foregroundColor: darkText,
@@ -1369,27 +1419,7 @@ class _PdfEditorViewState extends State<PdfEditorView> {
                   'Export PDF',
                   style: TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w800),
                 ),
-                onPressed: () {
-                  showDialog(
-                    context: context,
-                    builder: (context) => ExportDialog(
-                      project: _project,
-                      initialFileName: _pdfFileName,
-                      onFileNameChanged: _commitPdfFileName,
-                      onSendToDevice: (bytes, name) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Prepared $name for device transmission.',
-                              style: const TextStyle(fontFamily: 'Poppins'),
-                            ),
-                            backgroundColor: cardBg,
-                          ),
-                        );
-                      },
-                    ),
-                  );
-                },
+                onPressed: _openExportDialog,
               ),
               const SizedBox(width: 12),
             ],
@@ -1698,8 +1728,10 @@ class _PdfEditorViewState extends State<PdfEditorView> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           color: panelBg,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(

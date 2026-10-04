@@ -1,6 +1,7 @@
 import '../../core/constants.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../core/widgets/demo_mode_notice.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../data/services/transfer_engine.dart';
@@ -237,6 +238,7 @@ class _PairingViewState extends State<PairingView> {
               // Screen Header
               _buildHeader(engine, isSessionActive),
               const SizedBox(height: 24),
+              const DemoModeNotice(),
 
               // Two Main Functional Sections: Side-by-side on wide screens, stacked on small screens
               LayoutBuilder(
@@ -300,7 +302,10 @@ class _PairingViewState extends State<PairingView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
                       'Device Pairing',
@@ -311,7 +316,6 @@ class _PairingViewState extends State<PairingView> {
                         color: _primaryText,
                       ),
                     ),
-                    const SizedBox(width: 12),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                       decoration: BoxDecoration(
@@ -554,8 +558,10 @@ class _PairingViewState extends State<PairingView> {
         const SizedBox(height: 18),
 
         // QR Controls: Regenerate QR Code & Copy
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 12,
+          runSpacing: 8,
           children: [
             // Prominent Regenerate control for QR Code
             ElevatedButton.icon(
@@ -579,7 +585,6 @@ class _PairingViewState extends State<PairingView> {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
             if (session != null && isSessionActive)
               OutlinedButton.icon(
                 onPressed: () {
@@ -764,13 +769,15 @@ class _PairingViewState extends State<PairingView> {
             children: [
               Icon(Icons.link_rounded, color: _limeAccent, size: 20),
               SizedBox(width: 8),
-              Text(
-                'Connect to another device',
-                style: TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: _primaryText,
+              Flexible(
+                child: Text(
+                  'Connect to another device',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: _primaryText,
+                  ),
                 ),
               ),
             ],
@@ -1110,19 +1117,23 @@ class _PairingViewState extends State<PairingView> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(Icons.devices_rounded, color: _limeAccent, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Connected Devices',
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: _primaryText,
+              Flexible(
+                child: Row(
+                  children: [
+                    Icon(Icons.devices_rounded, color: _limeAccent, size: 20),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'Connected Devices',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: _primaryText,
+                        ),
+                      ),
                     ),
-                  ),
                   const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -1141,7 +1152,8 @@ class _PairingViewState extends State<PairingView> {
                       ),
                     ),
                   ),
-                ],
+                  ],
+                ),
               ),
               if (devices.isNotEmpty)
                 TextButton.icon(

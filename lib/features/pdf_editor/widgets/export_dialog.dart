@@ -319,11 +319,11 @@ class _ExportDialogState extends State<ExportDialog> {
             // OCR Searchable Text Layer Option
             SwitchListTile(
               title: Text(
-                'Add Searchable OCR Text Layer',
+                'Add Searchable Text Layer',
                 style: TextStyle(fontFamily: 'Poppins', fontSize: 13, color: ExportDialog.primaryWhite),
               ),
               subtitle: Text(
-                'Embeds invisible searchable text into the PDF',
+                "Embeds each image's caption or file name as invisible, searchable text",
                 style: TextStyle(fontFamily: 'Poppins', fontSize: 11, color: ExportDialog.softGray),
               ),
               value: _includeOcr,

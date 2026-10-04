@@ -25,17 +25,23 @@ String _mimeFor(String fileName) {
 
 /// Asks the launcher server to write the file. Returns its path, or null when the
 /// server is unavailable (e.g. the app was opened by a plain static file server).
-Future<String?> _serverSave(Uint8List bytes, String fileName, {bool preview = false}) async {
+Future<String?> _serverSave(Uint8List bytes, String fileName, {bool preview = false, String? directory}) async {
   try {
     final uri = Uri.base.resolve('/api/save-file').replace(queryParameters: {
       'name': fileName,
       if (preview) 'preview': '1',
+      if (directory != null && _isAbsolutePath(directory)) 'dir': directory,
     });
     final res = await http.post(uri, headers: {'Content-Type': 'application/octet-stream'}, body: bytes);
     if (res.statusCode == 200) return jsonDecode(res.body)['path'] as String;
   } catch (_) {}
   return null;
 }
+
+/// The web default ("Downloads/QuickShare") is relative and means "server default";
+/// only an absolute folder picked in Settings is passed on.
+bool _isAbsolutePath(String path) =>
+    RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(path) || path.startsWith('/') || path.startsWith(r'\\');
 
 Future<void> _serverAction(String action, String path) async {
   final uri = Uri.base.resolve('/api/$action').replace(queryParameters: {'path': path});
@@ -46,7 +52,7 @@ Future<void> _serverAction(String action, String path) async {
 }
 
 Future<String> saveFile(Uint8List bytes, String fileName, String? directory) async {
-  final path = await _serverSave(bytes, fileName);
+  final path = await _serverSave(bytes, fileName, directory: directory);
   if (path != null) return 'Saved to $path';
   // No launcher server: let the browser download it instead.
   await FilePicker.saveFile(fileName: fileName, bytes: bytes, mimeType: _mimeFor(fileName));
@@ -72,7 +78,7 @@ Future<String> shareFile(Uint8List bytes, String fileName, String? directory) as
   if (result == 'cancelled') return 'Share cancelled';
 
   // Share sheet unavailable: save it and show it in File Explorer so it can be attached anywhere.
-  final path = await _serverSave(bytes, fileName);
+  final path = await _serverSave(bytes, fileName, directory: directory);
   if (path == null) return saveFile(bytes, fileName, directory);
   await _serverAction('reveal-file', path);
   return 'Saved to $path and opened its folder for sharing';

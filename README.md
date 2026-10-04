@@ -27,8 +27,8 @@ Everything runs locally on your machine. No account, no cloud upload.
 
 | Area | What you get |
 |---|---|
-| **PDF Studio** | Three-panel editor (pages · live preview · layout controls) with 1, 2, 3, 4, 6, 8 and 10 images per page or a custom grid; A3/A4/A5/Letter paper; printer-safe margins; borders, captions, headers/footers and page numbers; optional searchable OCR text layer. |
-| **PDF Tools** | Merge, split by page ranges, and compress (72 / 150 / 300 DPI profiles); file converter with whole-folder support. |
+| **PDF Studio** | Three-panel editor (pages · live preview · layout controls) with 1, 2, 3, 4, 6, 8 and 10 images per page or a custom grid; A3/A4/A5/Letter paper; printer-safe margins; borders, captions, headers/footers and page numbers; optional searchable text layer from captions. Work is kept while you switch sections. |
+| **PDF Tools** | Lossless merge and split (pages are copied, not re-rendered, so text stays selectable and files stay small); compression (72 / 100 / 150 DPI JPEG profiles); OCR for screenshots and scanned PDFs (English, Hindi) with text export and searchable-PDF output; file converter with whole-folder support. |
 | **Save, print & share** | Exports save straight to `Downloads/QuickShare`; *Print / Preview* opens the file in your system PDF viewer; *Share* opens the OS share sheet. |
 | **Device pairing** | Expiring 6-digit codes and QR pairing; the code regenerates on demand and old codes are invalidated. |
 | **File sharing** | Send to one or several paired devices with progress, pause/resume and SHA-256 integrity checks. |
@@ -36,7 +36,9 @@ Everything runs locally on your machine. No account, no cloud upload.
 | **Universal clipboard** | Text, links, code and images, previewed before anything is sent. |
 | **Privacy & security** | PIN lock, private mode, configurable download folder and one-click cache purge. |
 
-> **Project status:** PDF Studio, PDF Tools and file export are fully functional. Live device-to-device transfer over the local network is under active development; in the desktop packages, pairing and transfers currently run in a local demonstration mode.
+> **Project status:** PDF Studio, PDF Tools and file export are fully functional. Live device-to-device transfer over the local network is under active development: in the Windows/Linux packages, pairing and transfers run in a clearly labelled demo mode and no file leaves the computer.
+>
+> **Internet use:** everything works offline except OCR, which downloads the Tesseract engine and language data on first use, and PDF compression/OCR page rendering, which loads PDF.js from a CDN.
 
 ---
 

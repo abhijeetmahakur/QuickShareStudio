@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../core/widgets/demo_mode_notice.dart';
 import 'package:provider/provider.dart';
 import '../../data/models/device_model.dart';
 import '../../data/services/transfer_engine.dart';
@@ -226,6 +227,7 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+                const DemoModeNotice(),
                 // Security Notice Banner
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -262,7 +264,9 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                 const SizedBox(height: 20),
 
                 // Actions: Paste from Desktop / Mobile Clipboard
-                Row(
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
                   children: [
                     ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
@@ -289,7 +293,6 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                       ),
                       onPressed: _isReading ? null : _readClipboard,
                     ),
-                    const SizedBox(width: 12),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -458,9 +461,11 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                       children: [
                         Icon(Icons.info_outline_rounded, color: AppColors.secondaryText, size: 20),
                         SizedBox(width: 10),
-                        Text(
-                          'No paired devices connected. Please pair a device first.',
-                          style: TextStyle(fontFamily: 'Poppins', color: AppColors.secondaryText, fontSize: 12.5),
+                        Expanded(
+                          child: Text(
+                            'No paired devices connected. Please pair a device first.',
+                            style: TextStyle(fontFamily: 'Poppins', color: AppColors.secondaryText, fontSize: 12.5),
+                          ),
                         ),
                       ],
                     ),

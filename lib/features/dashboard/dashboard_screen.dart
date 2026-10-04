@@ -37,6 +37,14 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   late int _selectedIndex;
 
+  /// Sections opened so far. They stay mounted (hidden) so switching sections does not
+  /// throw away work such as PDF Studio pages or PDF Tools selections.
+  final Set<int> _visitedSections = {};
+  static const int _sectionCount = 9;
+
+  /// Keeps the workspace state when the layout switches between desktop and mobile.
+  final GlobalKey _workspaceKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -213,7 +221,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildActiveWorkspace(BuildContext context) {
-    switch (_selectedIndex) {
+    _visitedSections.add(_selectedIndex);
+    return IndexedStack(
+      key: _workspaceKey,
+      index: _selectedIndex,
+      sizing: StackFit.expand,
+      children: [
+        for (var i = 0; i < _sectionCount; i++)
+          _visitedSections.contains(i)
+              // Hidden sections get TickerMode off, which also pauses PDF Studio's
+              // global paste/keyboard/drop handlers.
+              ? TickerMode(enabled: i == _selectedIndex, child: _buildSection(context, i))
+              : const SizedBox.shrink(),
+      ],
+    );
+  }
+
+  Widget _buildSection(BuildContext context, int index) {
+    switch (index) {
       case 1: // PDF Studio
         return const PdfEditorView();
       case 2: // Device Pairing

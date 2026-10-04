@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import '../../core/widgets/demo_mode_notice.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../data/services/transfer_engine.dart';
@@ -488,6 +489,7 @@ class _SendFilesViewState extends State<SendFilesView> {
                 // Top Info & Host Device Status Card
                 _buildHostDeviceHeader(crossService, engine),
                 const SizedBox(height: 20),
+                const DemoModeNotice(),
 
                 // File Choosers Grid: PDFs, Photos, GIFs, Videos, Documents, Any File
                 _buildFilePickersSection(),
@@ -647,13 +649,17 @@ class _SendFilesViewState extends State<SendFilesView> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  'Name: ${engine.localDeviceName}',
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.primaryText,
+                Flexible(
+                  child: Text(
+                    'Name: ${engine.localDeviceName}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primaryText,
+                    ),
                   ),
                 ),
               ],
@@ -1012,14 +1018,17 @@ class _SendFilesViewState extends State<SendFilesView> {
             Expanded(
               child: Row(
                 children: [
-                  Text(
-                    'CONNECTED RECIPIENTS',
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                      color: AppColors.secondaryText,
-                      letterSpacing: 1.1,
+                  Flexible(
+                    child: Text(
+                      'CONNECTED RECIPIENTS',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                        color: AppColors.secondaryText,
+                        letterSpacing: 1.1,
+                      ),
                     ),
                   ),
                   if (engine.pairedDevices.isNotEmpty) ...[
@@ -1192,20 +1201,24 @@ class _SendFilesViewState extends State<SendFilesView> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    Icon(Icons.link_off_rounded, color: Colors.orange, size: 22),
-                    SizedBox(width: 12),
-                    Text(
-                      'No paired devices connected',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.primaryText,
-                        fontSize: 13,
+                Flexible(
+                  child: Row(
+                    children: [
+                      Icon(Icons.link_off_rounded, color: Colors.orange, size: 22),
+                      SizedBox(width: 12),
+                      Flexible(
+                        child: Text(
+                          'No paired devices connected',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primaryText,
+                            fontSize: 13,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 TextButton(
                   onPressed: widget.onNavigateToPairing,

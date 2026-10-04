@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/services/file_actions.dart';
+import '../../core/widgets/demo_mode_notice.dart';
 import 'package:provider/provider.dart';
 import '../../data/services/transfer_engine.dart';
 import '../../data/models/received_item_model.dart';
@@ -781,6 +782,7 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
             // Status & Storage Destination Card
             _buildStatusBanner(context, engine),
             const SizedBox(height: 20),
+            const DemoModeNotice(),
 
             // Category Filter Chips
             _buildFilterChips(engine),
@@ -894,8 +896,11 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
                 ),
               ),
               const SizedBox(width: 8),
-              Wrap(
+              Flexible(
+                child: Wrap(
+                alignment: WrapAlignment.end,
                 spacing: 8,
+                runSpacing: 8,
                 children: [
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
@@ -923,6 +928,7 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
                     onPressed: () => _editDownloadPath(context, engine),
                   ),
                 ],
+                ),
               ),
             ],
           ),

@@ -73,7 +73,9 @@ class _TransferHistoryViewState extends State<TransferHistoryView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header stats
-            Row(
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
               children: [
                 _buildStatBadge(
                   label: 'Total Transfers',
@@ -81,14 +83,12 @@ class _TransferHistoryViewState extends State<TransferHistoryView> {
                   icon: Icons.swap_horiz_rounded,
                   color: AppColors.primaryAccent,
                 ),
-                const SizedBox(width: 12),
                 _buildStatBadge(
                   label: 'Sent',
                   value: '$sentCount',
                   icon: Icons.arrow_upward_rounded,
                   color: AppColors.primaryAccent,
                 ),
-                const SizedBox(width: 12),
                 _buildStatBadge(
                   label: 'Received',
                   value: '$receivedCount',

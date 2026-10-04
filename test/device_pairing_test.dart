@@ -287,6 +287,8 @@ void main() {
       expect(find.text('Disconnect All'), findsOneWidget);
 
       // Disconnect one device
+      await tester.ensureVisible(find.text('Disconnect').first);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Disconnect').first);
       await tester.pumpAndSettle();
 
@@ -295,6 +297,8 @@ void main() {
       expect(find.text('Galaxy Tab S9'), findsNothing);
 
       // Disconnect All
+      await tester.ensureVisible(find.text('Disconnect All'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Disconnect All'));
       await tester.pumpAndSettle();
 

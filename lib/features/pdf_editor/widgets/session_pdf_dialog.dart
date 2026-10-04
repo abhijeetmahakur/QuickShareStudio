@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../../core/services/file_actions.dart';
+import '../../../core/widgets/demo_mode_notice.dart';
 import '../../../data/models/device_model.dart';
 import '../../../data/models/session_pdf.dart';
 import '../../../data/models/transfer_item.dart';
@@ -320,7 +321,14 @@ class _SessionPdfDialogState extends State<SessionPdfDialog> with SingleTickerPr
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-                child: _buildCurrentStepContent(engine),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Sending steps are simulated without the network service; say so.
+                    if (_currentStep != SessionPdfStep.ready) const DemoModeNotice(),
+                    _buildCurrentStepContent(engine),
+                  ],
+                ),
               ),
             ),
           ],

@@ -61,6 +61,9 @@ def sanitize_filename(name):
     return name
 
 
+# Files this server wrote during this run (may live in a custom download folder).
+WRITTEN_FILES = set()
+
 # Received files can come from other devices; never launch anything that runs code.
 BLOCKED_OPEN_EXTENSIONS = {
     ".exe", ".bat", ".cmd", ".com", ".msi", ".msp", ".scr", ".pif", ".cpl", ".ps1", ".psm1",
@@ -113,6 +116,8 @@ class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
         path = os.path.realpath(query.get("path", [""])[0])
         if not os.path.isfile(path):
             return None
+        if path.lower() in WRITTEN_FILES:
+            return path
         for root in (default_save_dir(), preview_dir()):
             root = os.path.realpath(root).lower()
             if os.path.commonpath([path.lower(), root]) == root:
@@ -135,13 +140,21 @@ class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
                 # Preview copies go to a temp folder and are overwritten, so printing
                 # does not pile up files in Downloads\QuickShare.
                 preview = query.get("preview", ["0"])[0] == "1"
-                save_dir = preview_dir() if preview else default_save_dir()
+                # Optional absolute folder chosen in Settings → Download folder.
+                custom_dir = query.get("dir", [""])[0].strip()
+                if preview:
+                    save_dir = preview_dir()
+                elif custom_dir and os.path.isabs(custom_dir):
+                    save_dir = custom_dir
+                else:
+                    save_dir = default_save_dir()
                 os.makedirs(save_dir, exist_ok=True)
                 target = os.path.join(save_dir, name)
                 if not preview:
                     target = unique_path(target)
                 with open(target, "wb") as f:
                     f.write(data)
+                WRITTEN_FILES.add(os.path.realpath(target).lower())
                 return self._send_json(200, {"path": target})
 
             if parsed.path in ("/api/open-file", "/api/reveal-file"):

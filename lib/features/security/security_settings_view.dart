@@ -152,7 +152,7 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
               controller: controller,
               decoration: const InputDecoration(
                 labelText: 'Folder Path',
-                hintText: r'C:\Users\Abhijeet\Downloads\QuickShare',
+                hintText: r'C:\Users\you\Downloads\QuickShare',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.folder_open),
               ),
@@ -507,11 +507,14 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                                     size: 18,
                                   ),
                                   SizedBox(width: 8),
-                                  Text(
-                                    'Received Files Storage',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: AppColors.secondaryText,
+                                  Flexible(
+                                    child: Text(
+                                      'Received Files Storage',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: AppColors.secondaryText,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -558,11 +561,14 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                                     size: 18,
                                   ),
                                   SizedBox(width: 8),
-                                  Text(
-                                    'Incomplete Transfers',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: AppColors.secondaryText,
+                                  Flexible(
+                                    child: Text(
+                                      'Incomplete Transfers',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: AppColors.secondaryText,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -684,14 +690,13 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                   const SizedBox(height: 16),
 
                   // Editable path row with Browse & Apply
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final pathField = TextField(
                           controller: _downloadPathController,
                           decoration: InputDecoration(
                             labelText: 'Active Download Directory Path',
-                            hintText: r'C:\Users\Abhijeet\Downloads\QuickShare',
+                            hintText: r'C:\Users\you\Downloads\QuickShare',
                             prefixIcon: Icon(
                               Icons.folder_open,
                               color: AppColors.primaryAccent,
@@ -716,10 +721,8 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                               );
                             }
                           },
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      ElevatedButton.icon(
+                        );
+                      final saveButton = ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.primaryAccent,
                           foregroundColor: AppColors.nearBlack,
@@ -741,9 +744,8 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                             );
                           }
                         },
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
+                      );
+                      final browseButton = OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 14,
@@ -756,8 +758,28 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                         ),
                         label: const Text('Browse...'),
                         onPressed: _browseFolder,
-                      ),
-                    ],
+                      );
+                      // Narrow windows: stack the buttons under the path field.
+                      if (constraints.maxWidth < 560) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            pathField,
+                            const SizedBox(height: 10),
+                            Wrap(spacing: 8, runSpacing: 8, children: [saveButton, browseButton]),
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(child: pathField),
+                          const SizedBox(width: 10),
+                          saveButton,
+                          const SizedBox(width: 8),
+                          browseButton,
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 14),
 
@@ -994,19 +1016,26 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'PAIRED DEVICES LIST',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                          color: AppColors.secondaryText,
+                      Flexible(
+                        child: Text(
+                          'PAIRED DEVICES LIST',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
                       ),
-                      Text(
-                        '${engine.pairedDevices.length} device(s) connected',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.secondaryText,
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          '${engine.pairedDevices.length} device(s) connected',
+                          textAlign: TextAlign.end,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
                         ),
                       ),
                     ],
@@ -1031,11 +1060,13 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                             color: AppColors.secondaryText,
                           ),
                           SizedBox(width: 10),
-                          Text(
-                            'No paired devices connected currently.',
-                            style: TextStyle(
-                              color: AppColors.secondaryText,
-                              fontSize: 12,
+                          Expanded(
+                            child: Text(
+                              'No paired devices connected currently.',
+                              style: TextStyle(
+                                color: AppColors.secondaryText,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ],
@@ -1898,7 +1929,10 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Wrap(
+                // Flexible so the buttons wrap instead of overflowing on narrow screens.
+                Flexible(
+                  child: Wrap(
+                  alignment: WrapAlignment.end,
                   spacing: 8,
                   runSpacing: 8,
                   children: [
@@ -1980,6 +2014,7 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                       },
                     ),
                   ],
+                ),
                 ),
               ],
             ),
