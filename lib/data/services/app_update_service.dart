@@ -10,6 +10,7 @@ import '../../core/constants.dart';
 import '../../core/utils/hash_utils.dart';
 import '../models/app_update_info.dart';
 import 'transfer_engine.dart';
+import 'updater/platform_updater.dart';
 
 enum UpdateStatus {
   idle,
@@ -29,8 +30,10 @@ class AppUpdateService extends ChangeNotifier {
   factory AppUpdateService() => _instance;
 
   AppUpdateService._internal() {
-    _init();
+    _ready = _init();
   }
+
+  late final Future<void> _ready;
 
   String _currentVersion = AppConstants.appVersion;
   String get currentVersion => _currentVersion;
@@ -66,6 +69,28 @@ class AppUpdateService extends ChangeNotifier {
 
   // Published releases registry (deployment source)
   AppUpdateInfo? _publishedRemoteRelease;
+
+  /// An update was found by the automatic check at launch and should be offered.
+  bool launchPrompt = false;
+
+  /// The running version is no longer supported: the update cannot be postponed.
+  bool get mustUpdate => _latestUpdate != null && _latestUpdate!.isBelowMinimum;
+
+  /// Checks GitHub once at launch (when automatic checks are on) and flags a prompt.
+  Future<void> checkOnLaunch() async {
+    await _ready;
+    if (!_autoCheckUpdates) return;
+    final update = await checkForUpdates(simulateLatency: false);
+    if (update != null && (!_isUpdatePostponed || update.isBelowMinimum)) {
+      launchPrompt = true;
+      notifyListeners();
+    }
+  }
+
+  void dismissLaunchPrompt() {
+    launchPrompt = false;
+    notifyListeners();
+  }
 
   Future<void> _init() async {
     try {
@@ -231,15 +256,46 @@ class AppUpdateService extends ChangeNotifier {
     final assets = (data['assets'] as List? ?? []).cast<Map<String, dynamic>>();
     final asset = assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull;
     final digest = (asset?['digest'] as String? ?? '');
+    var sha256 = digest.startsWith('sha256:') ? digest.substring(7) : '';
+    var minSupported = '1.0.0';
+
+    // latest.json (published by the release workflow): minimum supported version and the
+    // SHA-256 of each package, so the download can be verified even without GitHub digests.
+    final manifestAsset = assets.where((a) => a['name'] == 'latest.json').firstOrNull;
+    List<String>? manifestNotes;
+    if (manifestAsset != null) {
+      try {
+        final res = await http
+            .get(Uri.parse(manifestAsset['browser_download_url'] as String))
+            .timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200) {
+          final manifest = jsonDecode(res.body) as Map<String, dynamic>;
+          minSupported = manifest['minSupportedVersion'] as String? ?? minSupported;
+          final packages = (manifest['packages'] as Map?)?.cast<String, dynamic>() ?? const {};
+          final entry = packages.values.cast<Map<String, dynamic>>().where((p) => p['name'] == asset?['name']).firstOrNull;
+          final listed = entry?['sha256'] as String?;
+          if (listed != null && listed.isNotEmpty) {
+            if (sha256.isNotEmpty && sha256 != listed) {
+              throw Exception('Release checksums disagree; not offering this update.');
+            }
+            sha256 = listed;
+          }
+          manifestNotes = (manifest['notes'] as List?)?.map((e) => e.toString()).toList();
+        }
+      } on FormatException {
+        // A malformed manifest only loses the extra information.
+      }
+    }
 
     final body = (data['body'] as String? ?? '').trim();
-    final notes = body
-        .split('\n')
-        .map((l) => l.trim())
-        .where((l) => l.startsWith('- ') || l.startsWith('* '))
-        .map((l) => l.substring(2))
-        .take(8)
-        .toList();
+    final notes = manifestNotes ??
+        body
+            .split('\n')
+            .map((l) => l.trim())
+            .where((l) => l.startsWith('- ') || l.startsWith('* '))
+            .map((l) => l.substring(2))
+            .take(8)
+            .toList();
     final tag = (data['tag_name'] as String? ?? '0.0.0').replaceFirst(RegExp(r'^v'), '');
     return AppUpdateInfo(
       version: tag,
@@ -249,8 +305,11 @@ class AppUpdateService extends ChangeNotifier {
       releaseNotes: notes,
       publishedAt: DateTime.tryParse(data['published_at'] as String? ?? '') ?? DateTime.now(),
       packageSizeBytes: (asset?['size'] as num?)?.toInt() ?? 0,
-      packageSha256: digest.startsWith('sha256:') ? digest.substring(7) : '',
+      packageSha256: sha256,
+      minSupportedVersion: minSupported,
+      isMandatory: AppUpdateInfo.compareVersions(_currentVersion, minSupported) < 0,
       downloadUrl: data['html_url'] as String? ?? 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest',
+      packageUrl: asset?['browser_download_url'] as String? ?? '',
     );
   }
 
@@ -281,8 +340,46 @@ class AppUpdateService extends ChangeNotifier {
       return false;
     }
 
+    if (_isGitHubRelease(_latestUpdate!) && canSelfUpdate && !(engine?.hasActiveTransfers ?? false)) {
+      final update = _latestUpdate!;
+      _status = UpdateStatus.downloading;
+      _updateProgress = 0;
+      _errorMessage = null;
+      _statusMessage = 'Downloading v${update.version}...';
+      notifyListeners();
+      final result = await downloadAndInstall(update, (p) {
+        _updateProgress = p;
+        _status = p >= 1 ? UpdateStatus.verifying : UpdateStatus.downloading;
+        _statusMessage = p >= 1 ? 'Verifying the package...' : 'Downloading v${update.version} (${(p * 100).floor()}%)...';
+        notifyListeners();
+      });
+      _statusMessage = result.message;
+      if (result.ok) {
+        _status = UpdateStatus.readyToRestart;
+        notifyListeners();
+        onComplete?.call();
+        return true;
+      }
+      _status = UpdateStatus.failed;
+      _errorMessage = result.message;
+      notifyListeners();
+      if (result.openReleasePage) {
+        await launchUrl(Uri.parse(update.downloadUrl), mode: LaunchMode.externalApplication);
+      }
+      onError?.call(result.message);
+      return false;
+    }
+
     if (_isGitHubRelease(_latestUpdate!)) {
       final version = _latestUpdate!.version;
+      if (engine != null && engine.hasActiveTransfers) {
+        const err = 'Cannot update while a file transfer is actively in progress. Please wait for transfers to finish.';
+        _errorMessage = err;
+        _status = UpdateStatus.failed;
+        notifyListeners();
+        onError?.call(err);
+        return false;
+      }
       final opened = await launchUrl(Uri.parse(_latestUpdate!.downloadUrl), mode: LaunchMode.externalApplication);
       _statusMessage = opened
           ? 'Opened the v$version download page. Install it to finish updating.'

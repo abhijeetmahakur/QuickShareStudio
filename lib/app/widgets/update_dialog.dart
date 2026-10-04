@@ -70,6 +70,8 @@ class _UpdateDialogState extends State<UpdateDialog> {
         updateService.status == UpdateStatus.staging;
     final isApplied = updateService.status == UpdateStatus.applied;
     final isFailed = updateService.status == UpdateStatus.failed;
+    // Versions below the minimum supported one cannot postpone.
+    final mandatory = update.isBelowMinimum;
 
     return Dialog(
       backgroundColor: AppColors.cardBg,
@@ -130,7 +132,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                     ],
                   ),
                 ),
-                if (!isProcessing)
+                if (!isProcessing && !mandatory)
                   IconButton(
                     icon: Icon(Icons.close, size: 20, color: AppColors.secondaryText),
                     tooltip: 'Postpone',
@@ -327,6 +329,20 @@ class _UpdateDialogState extends State<UpdateDialog> {
             ],
 
             // Action Buttons
+            if (mandatory) ...[
+              Text(
+                'This version (v${update.currentVersion}) is no longer supported. Update to keep sharing files with other devices.',
+                style: TextStyle(fontSize: 12.5, color: AppColors.warning, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (updateService.status == UpdateStatus.readyToRestart || (isFailed && updateService.statusMessage.isNotEmpty)) ...[
+              Text(
+                updateService.statusMessage,
+                style: TextStyle(fontSize: 12.5, color: isFailed ? AppColors.error : AppColors.success),
+              ),
+              const SizedBox(height: 12),
+            ],
             if (isApplied)
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
@@ -342,7 +358,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
             else if (!isProcessing)
               Row(
                 children: [
-                  Expanded(
+                  if (!mandatory) Expanded(
                     child: OutlinedButton(
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
@@ -353,7 +369,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                       child: Text('Update Later', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.white)),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  if (!mandatory) const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(

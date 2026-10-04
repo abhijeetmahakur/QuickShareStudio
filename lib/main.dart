@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'app/widgets/update_dialog.dart';
+import 'core/services/background_transfers.dart';
 import 'features/connect/widgets/incoming_offer_host.dart';
 import 'transfer/connection_manager.dart';
 import 'transfer/transfer_settings.dart';
@@ -25,7 +27,12 @@ void main() async {
           if (link != null) TransferEngine().attachPeerLink(link);
         })
       : CrossDeviceTransferService().initialize();
-  lanReady.whenComplete(() => ConnectionManager.instance.start());
+  lanReady.whenComplete(() async {
+    await ConnectionManager.instance.start();
+    // Existing users learn about new versions (and must update below the minimum).
+    await AppUpdateService().checkOnLaunch();
+  });
+  BackgroundTransferGuard.attach(TransferEngine());
   runApp(
     MultiProvider(
       providers: [
@@ -39,6 +46,33 @@ void main() async {
       child: const QuickShareApp(),
     ),
   );
+}
+
+/// Lets services show dialogs above whatever screen is open.
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Shows the update dialog once when the launch check finds a new version.
+class UpdateLaunchPrompt extends StatelessWidget {
+  const UpdateLaunchPrompt({super.key, required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    AppUpdateService? updates;
+    try {
+      updates = context.watch<AppUpdateService>();
+    } catch (_) {}
+    final update = updates?.latestUpdate;
+    if (updates != null && updates.launchPrompt && update != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final navContext = appNavigatorKey.currentContext;
+        if (navContext == null || !updates!.launchPrompt) return;
+        updates.dismissLaunchPrompt();
+        UpdateDialog.show(navContext, update);
+      });
+    }
+    return child;
+  }
 }
 
 class QuickShareApp extends StatefulWidget {
@@ -141,8 +175,11 @@ class _QuickShareAppState extends State<QuickShareApp> {
       themeMode: currentThemeMode,
       // Instant switch: an animated lerp would mix old and new palettes mid-transition.
       themeAnimationDuration: Duration.zero,
+      navigatorKey: appNavigatorKey,
       // Incoming files ask for Accept / Decline on top of any screen.
-      builder: (context, child) => IncomingOfferHost(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) => IncomingOfferHost(
+        child: UpdateLaunchPrompt(child: child ?? const SizedBox.shrink()),
+      ),
       home: effectiveHome,
     );
   }

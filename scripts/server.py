@@ -6,7 +6,10 @@ import mimetypes
 import json
 import re
 import subprocess
+import shutil
+import tarfile
 import tempfile
+import zipfile
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -74,6 +77,133 @@ def sanitize_filename(name):
 
 # Files this server wrote during this run (may live in a custom download folder).
 WRITTEN_FILES = set()
+
+# =====================================================================================
+# In-app updates for the packaged desktop app (web bundle + this launcher).
+# Only release assets of this repository are accepted, and only after their SHA-256 matches.
+# =====================================================================================
+UPDATE_URL_PREFIX = "https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/"
+UPDATE_ALLOW_ANY_URL = os.environ.get("QUICKSHARE_UPDATE_ALLOW_ANY_URL") == "1"   # tests only
+PACKAGED_FILES = ("server.py", "launch.ps1", "launch.vbs", "launch.sh", "app_icon.ico", "LICENSE", "VERSION")
+
+
+def current_version():
+    try:
+        with open(os.path.join(script_dir, "VERSION"), encoding="utf-8") as f:
+            return f.read().strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
+
+
+UPDATE = {"state": "idle", "progress": 0.0, "error": None, "target": None}
+UPDATE_LOCK = threading.Lock()
+
+
+def is_packaged_install():
+    """True when this launcher serves its own web/ folder (a release package), not a source checkout."""
+    return os.path.realpath(web_dir) == os.path.realpath(os.path.join(script_dir, "web")) and \
+        not os.path.isdir(os.path.join(script_dir, "..", "lib"))
+
+
+def _set_update(**kw):
+    with UPDATE_LOCK:
+        UPDATE.update(kw)
+
+
+def _package_root(folder):
+    """The extracted folder that contains web/ and server.py."""
+    for root, dirs, files in os.walk(folder):
+        if "web" in dirs and "server.py" in files:
+            return root
+    return None
+
+
+def apply_update(url, expected_sha256, version, restart=True):
+    """Downloads, verifies, installs and restarts. Runs in a background thread."""
+    work = tempfile.mkdtemp(prefix="quickshare_update_")
+    try:
+        _set_update(state="downloading", progress=0.0, error=None, target=version)
+        archive = os.path.join(work, "package.zip" if url.endswith(".zip") else "package.tar.gz")
+        digest = hashlib.sha256()
+        req = urllib.request.Request(url, headers={"User-Agent": "QuickShareStudio-Updater"})
+        with urllib.request.urlopen(req, timeout=60) as resp, open(archive, "wb") as out:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                digest.update(chunk)
+                done += len(chunk)
+                if total:
+                    _set_update(progress=min(done / total, 1.0))
+        _set_update(state="verifying", progress=1.0)
+        if not secrets.compare_digest(digest.hexdigest(), expected_sha256.lower()):
+            raise ValueError("The download was damaged (checksum mismatch). Nothing was changed.")
+
+        _set_update(state="installing")
+        extracted = os.path.join(work, "x")
+        if archive.endswith(".zip"):
+            with zipfile.ZipFile(archive) as z:
+                for name in z.namelist():
+                    target = os.path.realpath(os.path.join(extracted, name))
+                    if not target.startswith(os.path.realpath(extracted)):
+                        raise ValueError("The package contains unsafe paths.")
+                z.extractall(extracted)
+        else:
+            with tarfile.open(archive) as t:
+                for member in t.getmembers():
+                    target = os.path.realpath(os.path.join(extracted, member.name))
+                    if not target.startswith(os.path.realpath(extracted)) or member.issym() or member.islnk():
+                        raise ValueError("The package contains unsafe paths.")
+                t.extractall(extracted)
+        root = _package_root(extracted)
+        if not root:
+            raise ValueError("The package does not look like QuickShare Studio.")
+
+        # Swap web/ atomically-ish: keep the old copy until the new one is in place.
+        old_web = os.path.join(script_dir, "web.old")
+        shutil.rmtree(old_web, ignore_errors=True)
+        live_web = os.path.join(script_dir, "web")
+        os.replace(live_web, old_web)
+        try:
+            shutil.copytree(os.path.join(root, "web"), live_web)
+        except Exception:
+            shutil.rmtree(live_web, ignore_errors=True)
+            os.replace(old_web, live_web)
+            raise
+        for name in PACKAGED_FILES:
+            src = os.path.join(root, name)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(script_dir, name))
+        if not os.path.isfile(os.path.join(root, "VERSION")):
+            with open(os.path.join(script_dir, "VERSION"), "w", encoding="utf-8") as f:
+                f.write(version)
+        shutil.rmtree(old_web, ignore_errors=True)
+        _set_update(state="restarting")
+        if restart:
+            threading.Timer(0.8, restart_launcher).start()
+        else:
+            _set_update(state="done")
+    except Exception as e:  # noqa: BLE001 - reported to the app
+        message = str(e) if isinstance(e, ValueError) else f"The update could not be applied ({e.__class__.__name__})."
+        _set_update(state="failed", error=message)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+SERVER_STATE = {"port": None}
+
+
+def restart_launcher():
+    """Starts the new launcher (it waits for our ports) and exits this one."""
+    args = [sys.executable, os.path.join(script_dir, "server.py")]
+    env = dict(os.environ, QUICKSHARE_PREFERRED_PORT=str(SERVER_STATE["port"] or ""))
+    flags = 0x08000000 if sys.platform == "win32" else 0      # CREATE_NO_WINDOW
+    subprocess.Popen(args, cwd=script_dir, env=env, close_fds=True, creationflags=flags)
+    os._exit(0)
+
 
 # Files being received in pieces (see QuickShareHandler._stream).
 STREAMS = {}
@@ -654,7 +784,33 @@ class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
         ws_relay(app, remote)
         return None
 
+    def _update_get(self):
+        with UPDATE_LOCK:
+            state = dict(UPDATE)
+        return self._send_json(200, {**state, "version": current_version(), "packaged": is_packaged_install(),
+                                     "pid": os.getpid()})
+
+    def _update_post(self):
+        data = self._read_json()
+        url = str(data.get("url") or "")
+        sha = str(data.get("sha256") or "").lower()
+        version = str(data.get("version") or "")
+        if not is_packaged_install():
+            return self._send_json(501, {"error": "This copy runs from the source code. Update it with git pull and a rebuild."})
+        if not (UPDATE_ALLOW_ANY_URL or url.startswith(UPDATE_URL_PREFIX)) or not (url.endswith(".zip") or url.endswith(".tar.gz")):
+            return self._send_json(400, {"error": "Updates are only accepted from QuickShare Studio's GitHub releases."})
+        if not re.fullmatch(r"[0-9a-f]{64}", sha):
+            return self._send_json(400, {"error": "The release has no SHA-256 checksum, so it cannot be verified."})
+        with UPDATE_LOCK:
+            busy = UPDATE["state"] in ("downloading", "verifying", "installing", "restarting")
+        if busy:
+            return self._send_json(409, {"error": "An update is already in progress."})
+        threading.Thread(target=apply_update, args=(url, sha, version), daemon=True).start()
+        return self._send_json(200, {"ok": True})
+
     def _lan_get(self, path, query):
+        if path == "/api/update/status":
+            return self._update_get()
         if path == "/api/lan/tunnel":
             return self._lan_tunnel(query)
         if path == "/api/lan/status":
@@ -788,6 +944,8 @@ class QuickShareHandler(http.server.SimpleHTTPRequestHandler):
                 return self._lan_post(parsed.path, query)
             if parsed.path.startswith("/api/stream/"):
                 return self._stream(parsed.path, query)
+            if parsed.path == "/api/update/apply":
+                return self._update_post()
             if parsed.path == "/api/save-file":
                 length = int(self.headers.get("Content-Length", "0"))
                 data = self.rfile.read(length)
@@ -855,6 +1013,16 @@ class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     # On Windows SO_REUSEADDR would let two app instances bind the same port.
     allow_reuse_address = sys.platform != "win32"
 
+def _bind_preferred(port, attempts=60):
+    """After an update the new launcher waits for the old one to release its port."""
+    for _ in range(attempts):
+        try:
+            return ReusableTCPServer(("127.0.0.1", port), QuickShareHandler)
+        except OSError:
+            time.sleep(0.25)
+    return None
+
+
 def run():
     starting_port = 52830
     port_file = os.path.join(script_dir, "active_port.txt")
@@ -862,7 +1030,15 @@ def run():
     server = None
     selected_port = None
 
+    preferred = os.environ.get("QUICKSHARE_PREFERRED_PORT", "")
+    if preferred.isdigit():
+        server = _bind_preferred(int(preferred))
+        if server:
+            selected_port = int(preferred)
+
     for port in range(starting_port, starting_port + 100):
+        if server:
+            break
         try:
             server = ReusableTCPServer(("127.0.0.1", port), QuickShareHandler)
             selected_port = port
@@ -888,7 +1064,17 @@ def run():
     except Exception:
         pass
 
+    SERVER_STATE["port"] = selected_port
     if os.environ.get("QUICKSHARE_NO_LAN") != "1":
+        if preferred.isdigit():
+            # Keep the LAN port paired devices know: wait for the previous launcher to exit.
+            for _ in range(40):
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                        probe.bind(("0.0.0.0", LAN_HTTP_PORT))
+                    break
+                except OSError:
+                    time.sleep(0.25)
         start_lan_services()
 
     try:
