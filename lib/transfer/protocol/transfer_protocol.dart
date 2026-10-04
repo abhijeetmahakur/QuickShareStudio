@@ -163,6 +163,11 @@ class RateMeter {
 /// Receiver-side transfers interrupted by a dropped connection, kept for a while so the
 /// sender can resume instead of starting over.
 class PartialTransferStore {
+  PartialTransferStore({this.onDiscarded});
+
+  /// Called with a transfer id when its partial data is deleted (expired or cancelled).
+  void Function(String transferId, {required bool expired})? onDiscarded;
+
   final Map<String, (_IncomingRun, Timer)> _runs = {};
 
   /// Accepted transfers currently attached to a connection.
@@ -176,6 +181,7 @@ class PartialTransferStore {
       Timer(grace, () {
         _runs.remove(run.offer.transferId);
         run.discard();
+        onDiscarded?.call(run.offer.transferId, expired: true);
       }),
     );
   }
@@ -209,6 +215,17 @@ class PartialTransferStore {
 
   /// Whether [transferId] can still be resumed (interrupted, or live on another connection).
   bool contains(String transferId) => _runs.containsKey(transferId) || _live.containsKey(transferId);
+
+  /// Deletes an interrupted transfer's partial data (the receiver cancelled it).
+  Future<bool> discard(String transferId) async {
+    final entry = _runs.remove(transferId);
+    if (entry == null) return false;
+    entry.$2.cancel();
+    await entry.$1.discard();
+    entry.$1.phase = TransferPhase.cancelled;
+    onDiscarded?.call(transferId, expired: false);
+    return true;
+  }
 
   void discardAll() {
     for (final entry in _runs.values) {

@@ -366,6 +366,46 @@ void main() {
       expect(got.sha256, sha256.convert(got.bytes!).toString());
     });
 
+    test('the receiver can cancel an interrupted transfer: partial data is deleted', () async {
+      final discarded = <String>[];
+      final store = PartialTransferStore(onDiscarded: (id, {required expired}) => discarded.add('$id:$expired'));
+      final first = _Pair(partials: store, config: const AppConfig(flowControlWindow: 512 * 1024));
+      final out = OutgoingTransfer(files: [GeneratedFileSource('x', 16 * 1024 * 1024)], config: first.config, peerName: 'Bob');
+      final running = out.run(first.sender);
+      await first.receiver.incomingUpdates.firstWhere((s) => s.bytesDone > 1024 * 1024);
+      first.aliceEnd.sever();
+      await running;
+      await pumpEventQueue();
+      expect(store.contains(out.transferId), isTrue);
+      expect(first.sinks.single.length, greaterThan(0));
+
+      expect(await store.discard(out.transferId), isTrue);
+      expect(store.contains(out.transferId), isFalse);
+      expect(first.sinks.single.length, 0, reason: 'partial data deleted');
+      expect(discarded, ['${out.transferId}:false']);
+      expect(await store.discard(out.transferId), isFalse);
+
+      // And it can no longer be resumed.
+      final second = _Pair(partials: store, config: first.config);
+      expect((await out.run(second.sender, resume: true)).phase, TransferPhase.failed);
+    });
+
+    test('an unresumed partial transfer expires and is deleted', () async {
+      final discarded = <String>[];
+      final store = PartialTransferStore(onDiscarded: (id, {required expired}) => discarded.add('$id:$expired'));
+      final config = const AppConfig(flowControlWindow: 512 * 1024, resumeGracePeriod: Duration(milliseconds: 200));
+      final first = _Pair(partials: store, config: config);
+      final out = OutgoingTransfer(files: [GeneratedFileSource('x', 16 * 1024 * 1024)], config: config, peerName: 'Bob');
+      final running = out.run(first.sender);
+      await first.receiver.incomingUpdates.firstWhere((s) => s.bytesDone > 1024 * 1024);
+      first.aliceEnd.sever();
+      await running;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(store.contains(out.transferId), isFalse);
+      expect(first.sinks.single.length, 0);
+      expect(discarded, ['${out.transferId}:true']);
+    });
+
     test('a resume from a different sender identity is refused', () async {
       final store = PartialTransferStore();
       final first = _Pair(partials: store, config: const AppConfig(flowControlWindow: 512 * 1024));

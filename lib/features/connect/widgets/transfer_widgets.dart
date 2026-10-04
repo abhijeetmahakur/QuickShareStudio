@@ -161,7 +161,8 @@ class TransferProgressTile extends StatelessWidget {
                   style: TextStyles.caption.copyWith(
                       color: t.status == TransferStatus.failed || t.status == TransferStatus.paused ? color : null)),
             ),
-            if (t.status == TransferStatus.paused && t.resumable)
+            // Resuming is the sender's move; the receiver just waits (or cancels).
+            if (t.status == TransferStatus.paused && t.resumable && t.isSender)
               _Action('Resume', Icons.play_arrow_rounded, () => engine.resumeTransfer(t.transferId)),
             if ((t.status == TransferStatus.paused || t.status == TransferStatus.failed) && t.isSender)
               _Action('Retry', Icons.refresh_rounded, () => engine.retryTransfer(t.transferId)),

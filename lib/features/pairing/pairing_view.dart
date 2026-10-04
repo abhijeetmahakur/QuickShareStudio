@@ -1404,8 +1404,8 @@ class _PairingViewState extends State<PairingView> {
           ),
           const SizedBox(height: 18),
 
-          // Helper simulation buttons to verify pairing functionality
-          Wrap(
+          // Demo mode only: these add simulated devices, which would mislead in the real app.
+          if (!_isLive(engine)) Wrap(
             spacing: 8,
             runSpacing: 8,
             alignment: WrapAlignment.center,

@@ -90,7 +90,7 @@ class ConnectionManager extends ChangeNotifier {
 
   AppConfig config = AppConfig.current;
   final TransferSettings settings = TransferSettings.instance;
-  final PartialTransferStore partials = PartialTransferStore();
+  late final PartialTransferStore partials = PartialTransferStore(onDiscarded: _onPartialDiscarded);
   final AttemptLimiter limiter = AttemptLimiter();
 
   /// Live connections by device id.
@@ -730,9 +730,23 @@ class ConnectionManager extends ChangeNotifier {
       _mirror(t.outgoing.snapshot, t.device, t.method);
       return;
     }
+    // Interrupted incoming transfers wait in the resume store, detached from any connection.
+    if (await partials.discard(transferId)) return;
     for (final link in links.values) {
       await link.session.cancelIncoming(transferId);
     }
+  }
+
+  void _onPartialDiscarded(String transferId, {required bool expired}) {
+    final idx = _engine.activeTransfers.indexWhere((t) => t.transferId == transferId);
+    if (idx == -1) return;
+    _engine.updateTransfer(_engine.activeTransfers[idx].copyWith(
+      status: expired ? TransferStatus.failed : TransferStatus.cancelled,
+      errorMessage: expired ? "The sender didn't resume in time; the partial file was deleted." : 'Cancelled. The partial file was deleted.',
+      resumable: false,
+      speedBytesPerSec: 0,
+      clearEta: true,
+    ));
   }
 
   // -------------------------------------------------------------------------------------
