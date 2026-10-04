@@ -51,6 +51,10 @@ Pre-built packages are published on the **[Releases page](https://github.com/abh
 | 🐧 **Linux** (x64) | `QuickShareStudio-Linux.tar.gz` | Python 3, Google Chrome / Chromium / Edge |
 | 🤖 **Android** | `QuickShareStudio-Android.apk` | Permission to install apps from your browser/file manager |
 | 🍎 **iOS / iPadOS** | Build from source (see below) | A Mac with Xcode |
+| 🌐 **Web / PWA** | Install via browser (Chrome / Edge / Safari) | Any modern browser with PWA support |
+
+> [!NOTE]
+> **PWA App Icon Refresh:** Web browsers aggressively cache PWA installation manifests and icons. If you have an already-installed copy of QuickShare Studio on your device, it must be uninstalled and reinstalled to refresh the cached home screen icon, app switcher icon, and splash screen with the new logo.
 
 ### 🪟 Windows
 
