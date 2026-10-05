@@ -12,6 +12,11 @@ All notable changes to QuickShare Studio. Versions follow [semantic versioning](
 ### Changed
 - **Windows app icon:** Replaced window title bar, taskbar, and executable icon with multi-size ICO (16-256px) derived from the official QuickShare logo.
 - **Scan QR Code:** Simplified scanner view, keeping camera scan as the primary flow.
+- **Release packaging:** Publish native Windows setup and portable packages, Linux bundle, and Android APK from tagged GitHub releases.
+
+### Fixed
+- **Release artifacts:** Include and checksum every required release artifact in the updater manifest.
+- **Pairing and transfer:** Robust cross-network pairing and reliable chunked transfer over WebRTC.
 
 ## [2.0.1] - 2026-10-05
 

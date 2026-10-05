@@ -1,13 +1,6 @@
 name: Release
 
-# Builds downloadable packages and attaches them to a GitHub Release.
-# Trigger: push a version tag, e.g. git tag v1.0.1 && git push origin v1.0.1
-# (or run it manually from the Actions tab).
-#
-# Optional repository secrets (Settings -> Secrets and variables -> Actions):
-#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
-#       Signs every APK with the same key. Without it each build gets a throwaway debug key,
-#       and Android refuses to install one release over another (in-app updates fail).
+# Push a version tag (for example v2.0.3) to build packages and publish a GitHub Release.
 on:
   push:
     tags: ["v*"]
@@ -18,66 +11,78 @@ permissions:
 
 jobs:
   windows-release:
-    name: Windows Release
+    name: Windows native app
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
-
-      - name: Enable Windows Desktop
+      - name: Enable Windows desktop
         run: flutter config --enable-windows-desktop
-
       - name: Install dependencies
         run: flutter pub get
-
-      - name: Build Windows Release
+      - name: Build Windows release
         run: flutter build windows --release
-
-      - name: Package Windows Zip and Installer
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Package Windows zip and installer
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path "dist" -Force | Out-Null
-
-          # Create zip of the native Windows release build
           Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "dist\QuickShareStudio-Windows-x64.zip" -Force
-          Write-Host "Created dist\QuickShareStudio-Windows-x64.zip"
-
-          # Compile Inno Setup installer if iscc is available on the runner
-          $iscc = "C:\Program Files (x86)\Inno Setup 6\iscc.exe"
-          if (Test-Path $iscc) {
-            $tag = "${{ github.ref_name }}".TrimStart('v')
-            & $iscc /DMyAppVersion="$tag" windows\installer\quickshare.iss
-            Write-Host "Compiled Inno Setup installer: dist\QuickShareStudio-Windows-Setup.exe"
-          } else {
-            Write-Warning "Inno Setup (iscc.exe) not found on runner; skipping setup exe generation."
-          }
-
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler was not installed." }
+          & $iscc /DMyAppVersion="$tag" windows\installer\quickshare.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-packages
-          path: dist/*
+          path: |
+            dist/QuickShareStudio-Windows-x64.zip
+            dist/QuickShareStudio-Windows-Setup.exe
 
-  android-release:
-    name: Android Release
+  linux-release:
+    name: Linux web bundle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build web --release --wasm --no-web-resources-cdn
+      - name: Package Linux launcher bundle
+        run: |
+          PKG=dist/QuickShareStudio-Linux
+          mkdir -p "$PKG/web"
+          cp -r build/web/. "$PKG/web/"
+          cp scripts/server.py scripts/launch.sh "$PKG/"
+          chmod +x "$PKG/launch.sh"
+          cp LICENSE VERSION "$PKG/"
+          tar -C dist -czf dist/QuickShareStudio-Linux.tar.gz QuickShareStudio-Linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: dist/QuickShareStudio-Linux.tar.gz
 
+  android-release:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
-
-      - name: Release signing key (from secrets)
+      - name: Configure release signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -92,42 +97,35 @@ jobs:
               echo "keyAlias=$KEY_ALIAS"
               echo "keyPassword=$KEY_PASSWORD"
             } > android/key.properties
-            echo "Signing with the release key."
+            echo "Signing with configured release key."
           else
-            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: building with debug signature."
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret. This APK cannot update installs signed with a different key."
           fi
-
       - name: Build APK
         run: |
           flutter pub get
           flutter build apk --release
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/QuickShareStudio-Android.apk
-
       - uses: actions/upload-artifact@v4
         with:
-          name: android-packages
+          name: android-package
           path: dist/QuickShareStudio-Android.apk
 
   publish:
     name: Publish GitHub Release
-    needs: [windows-release, android-release]
+    needs: [windows-release, linux-release, android-release]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-
-      - name: Generate Checksums & Manifest
-        run: |
-          python3 tool/release/make_manifest.py "${GITHUB_REF_NAME#v}" dist || true
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Generate checksums, update manifest, and release notes
+        run: python3 tool/release/make_manifest.py "${GITHUB_REF_NAME#v}" dist
+      - uses: softprops/action-gh-release@v2
         with:
           body_path: dist/notes.md
           files: |

@@ -14,7 +14,6 @@ const _system = MethodChannel('quickshare/system');
 
 Future<InstallResult> downloadAndInstall(AppUpdateInfo update, void Function(double progress) onProgress) async {
   if (Platform.isWindows) {
-    final url = update.packageUrl;
     if (url.isEmpty) {
       return const InstallResult(false, 'Opening release download page...', openReleasePage: true);
     }

@@ -15,6 +15,7 @@ import sys
 PACKAGES = {
     "android": "QuickShareStudio-Android.apk",
     "windows": "QuickShareStudio-Windows-x64.zip",
+    "windows_setup": "QuickShareStudio-Windows-Setup.exe",
     "linux": "QuickShareStudio-Linux.tar.gz",
 }
 
