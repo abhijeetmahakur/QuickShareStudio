@@ -8,7 +8,6 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/constants.dart';
-import '../../core/design/tokens.dart';
 
 /// What a QuickShare QR code carries.
 class PairingQr {
@@ -64,287 +63,465 @@ class QrScannerPage extends StatefulWidget {
   State<QrScannerPage> createState() => _QrScannerPageState();
 }
 
-class _QrScannerPageState extends State<QrScannerPage>
-    with WidgetsBindingObserver {
-  final MobileScannerController _controller = MobileScannerController(
-    autoStart: false,
-    facing: CameraFacing.back,
-    formats: const [BarcodeFormat.qrCode],
-  );
+class _QrScannerPageState extends State<QrScannerPage> {
+  late final MobileScannerController _controller;
   bool _done = false;
-  bool _starting = false;
-  bool _cameraReady = false;
-  bool _cameraPermissionGranted = false;
-  bool _permissionNeedsSettings = false;
-  String? _cameraError;
+  bool _permissionDenied = false;
+  bool _permanentlyDenied = false;
+  String? _errorMessage;
+  String? _invalidQrMessage;
+  Timer? _invalidQrTimer;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => unawaited(_startCamera()),
+    _controller = MobileScannerController(
+      autoStart: true,
+      facing: CameraFacing.back,
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      formats: const [BarcodeFormat.qrCode],
     );
+    _checkInitialPermission();
+  }
+
+  Future<void> _checkInitialPermission() async {
+    if (kIsWeb) return;
+    try {
+      final status = await Permission.camera.status;
+      if (status.isPermanentlyDenied) {
+        if (mounted) {
+          setState(() {
+            _permanentlyDenied = true;
+            _permissionDenied = true;
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    unawaited(_controller.dispose());
+    _invalidQrTimer?.cancel();
+    _controller.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_done) return;
-    if (state == AppLifecycleState.resumed && _cameraPermissionGranted) {
-      unawaited(_startCamera());
-    } else if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.paused) {
-      if (_cameraPermissionGranted && _cameraReady) {
-        unawaited(_controller.stop());
-      }
-      if (mounted && _cameraReady) setState(() => _cameraReady = false);
-    }
-  }
-
-  Future<void> _startCamera() async {
-    if (!mounted || _starting || _done) return;
-    setState(() {
-      _starting = true;
-      _cameraError = null;
-      _permissionNeedsSettings = false;
-    });
-
+  Future<void> _retryPermission() async {
     try {
-      if (!kIsWeb) {
-        var permission = await Permission.camera.status;
-        if (!permission.isGranted) {
-          permission = await Permission.camera.request();
-        }
-        if (!permission.isGranted) {
-          if (!mounted) return;
-          setState(() {
-            _starting = false;
-            _permissionNeedsSettings =
-                permission.isPermanentlyDenied || permission.isRestricted;
-            _cameraError = 'Camera access is needed to scan a QR code.';
-          });
-          return;
-        }
+      final status = await Permission.camera.request();
+      if (!mounted) return;
+      if (status.isGranted) {
+        setState(() {
+          _permissionDenied = false;
+          _permanentlyDenied = false;
+          _errorMessage = null;
+        });
+        await _controller.start();
+      } else if (status.isPermanentlyDenied) {
+        setState(() {
+          _permanentlyDenied = true;
+          _permissionDenied = true;
+        });
+        await openAppSettings();
+      } else {
+        setState(() {
+          _permissionDenied = true;
+        });
       }
-
-      _cameraPermissionGranted = true;
-      await _controller.start();
+    } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _starting = false;
-        _cameraReady = true;
-        _cameraError = null;
-      });
-    } on MobileScannerException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _starting = false;
-        _cameraReady = false;
-        _permissionNeedsSettings =
-            error.errorCode == MobileScannerErrorCode.permissionDenied &&
-            !kIsWeb;
-        _cameraError =
-            error.errorCode == MobileScannerErrorCode.permissionDenied
-            ? 'Allow camera access for QuickShare in your device settings, then try again.'
-            : "The camera couldn't start. Check that another app isn't using it, then try again.";
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _starting = false;
-        _cameraReady = false;
-        _cameraError = kIsWeb
-            ? 'Allow camera access in your browser and make sure this page uses HTTPS or localhost.'
-            : "The camera couldn't start. Check that another app isn't using it, then try again.";
-      });
+      setState(() => _errorMessage = "Could not request camera permission: $e");
     }
   }
 
-  Future<void> _openSettings() async {
-    await openAppSettings();
+  Future<void> _retryStart() async {
+    setState(() {
+      _errorMessage = null;
+      _permissionDenied = false;
+    });
+    try {
+      await _controller.start();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _errorMessage = "Could not start camera: $e");
+      }
+    }
   }
 
   void _onDetect(BarcodeCapture capture) {
     if (_done) return;
     for (final b in capture.barcodes) {
       final value = b.rawValue;
-      if (value != null && PairingQr.parse(value) != null) {
+      if (value == null || value.trim().isEmpty) continue;
+      final raw = value.trim();
+
+      final parsed = PairingQr.parse(raw);
+      if (parsed != null) {
         _done = true;
         HapticFeedback.mediumImpact();
-        Navigator.of(context).pop(value);
+        Navigator.of(context).pop(raw);
         return;
+      } else {
+        _handleInvalidQr(raw);
       }
     }
   }
 
+  void _handleInvalidQr(String raw) {
+    HapticFeedback.lightImpact();
+    setState(() {
+      _invalidQrMessage =
+          "Not a QuickShare pairing QR code. Please scan the QR code from the other device's pairing screen.";
+    });
+    _invalidQrTimer?.cancel();
+    _invalidQrTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _invalidQrMessage = null);
+    });
+  }
+
+  Widget _buildErrorView({
+    required IconData icon,
+    required String title,
+    required String message,
+    required Widget primaryAction,
+    Widget? secondaryAction,
+  }) {
+    return ColoredBox(
+      color: const Color(0xFF0C0C0B),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(28),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1E1C),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.limeGreen.withValues(alpha: 0.3)),
+                  ),
+                  child: Icon(icon, color: AppColors.limeGreen, size: 30),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 13,
+                    color: Color(0xFFC0C2B8),
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: primaryAction,
+                ),
+                if (secondaryAction != null) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: secondaryAction,
+                  ),
+                ],
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text(
+                    'Cancel and enter 6-digit code',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      color: Color(0xFF7A7D73),
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_permanentlyDenied) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0C0C0B),
+        appBar: AppBar(
+          title: const Text('Scan QR Code', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600)),
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        body: _buildErrorView(
+          icon: Icons.settings_outlined,
+          title: 'Camera Access Disabled',
+          message:
+              'Camera permission is permanently denied in your device settings. To scan pairing QR codes, enable camera permission in App Settings.',
+          primaryAction: ElevatedButton.icon(
+            onPressed: () => openAppSettings(),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.limeGreen,
+              foregroundColor: AppColors.nearBlack,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            icon: const Icon(Icons.settings, size: 18),
+            label: const Text('Open App Settings', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700)),
+          ),
+        ),
+      );
+    }
+
+    if (_permissionDenied) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0C0C0B),
+        appBar: AppBar(
+          title: const Text('Scan QR Code', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600)),
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        body: _buildErrorView(
+          icon: Icons.camera_alt_outlined,
+          title: 'Camera Permission Required',
+          message:
+              'QuickShare Studio needs camera access to scan pairing QR codes from other devices. Please allow camera permission to proceed.',
+          primaryAction: ElevatedButton.icon(
+            onPressed: _retryPermission,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.limeGreen,
+              foregroundColor: AppColors.nearBlack,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+            label: const Text('Grant Camera Permission', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700)),
+          ),
+          secondaryAction: OutlinedButton.icon(
+            onPressed: () => openAppSettings(),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white70,
+              side: const BorderSide(color: Color(0xFF333333)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            icon: const Icon(Icons.settings_outlined, size: 16),
+            label: const Text('Open App Settings', style: TextStyle(fontFamily: 'Poppins')),
+          ),
+        ),
+      );
+    }
+
+    if (_errorMessage != null) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0C0C0B),
+        appBar: AppBar(
+          title: const Text('Scan QR Code', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600)),
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        body: _buildErrorView(
+          icon: Icons.error_outline_rounded,
+          title: 'Camera Error',
+          message: _errorMessage!,
+          primaryAction: ElevatedButton.icon(
+            onPressed: _retryStart,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.limeGreen,
+              foregroundColor: AppColors.nearBlack,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Try Camera Again', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700)),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Scan QR code'),
+        title: const Text('Scan QR Code', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600, fontSize: 16)),
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
+        actions: [
+          IconButton(
+            tooltip: 'Toggle Flashlight',
+            icon: ValueListenableBuilder<MobileScannerState>(
+              valueListenable: _controller,
+              builder: (context, state, _) {
+                final isTorchOn = state.torchState == TorchState.on;
+                return Icon(
+                  isTorchOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
+                  color: isTorchOn ? AppColors.limeGreen : Colors.white70,
+                );
+              },
+            ),
+            onPressed: () => _controller.toggleTorch(),
+          ),
+          IconButton(
+            tooltip: 'Switch Camera',
+            icon: const Icon(Icons.flip_camera_ios_rounded, color: Colors.white70),
+            onPressed: () => _controller.switchCamera(),
+          ),
+        ],
       ),
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final scanSize = math
-                .max(
-                  0.0,
-                  math.min(
-                    300.0,
-                    math.min(
-                      constraints.maxWidth - 48,
-                      constraints.maxHeight * 0.44,
-                    ),
-                  ),
-                )
-                .toDouble();
+            final scanSize = math.min(
+              260.0,
+              math.min(constraints.maxWidth - 48, constraints.maxHeight * 0.45),
+            );
+
             return Stack(
               fit: StackFit.expand,
               children: [
                 MobileScanner(
                   controller: _controller,
                   onDetect: _onDetect,
-                  errorBuilder: (context, error) => _cameraIssue(
-                    title:
-                        error.errorCode ==
-                            MobileScannerErrorCode.permissionDenied
-                        ? 'Camera access is off'
-                        : 'Camera unavailable',
-                    body:
-                        error.errorCode ==
-                            MobileScannerErrorCode.permissionDenied
-                        ? 'Allow QuickShare to use the camera, then retry. You can also enter the six-digit code instead.'
-                        : "The camera couldn't start. Close other camera apps and retry, or enter the six-digit code instead.",
-                    showSettings:
-                        error.errorCode ==
-                            MobileScannerErrorCode.permissionDenied &&
-                        !kIsWeb,
+                  errorBuilder: (context, error) {
+                    final isPerm = error.errorCode == MobileScannerErrorCode.permissionDenied;
+                    return _buildErrorView(
+                      icon: isPerm ? Icons.no_photography_outlined : Icons.videocam_off_outlined,
+                      title: isPerm ? 'Camera Access Required' : 'Camera Unavailable',
+                      message: isPerm
+                          ? 'Allow QuickShare Studio to use the camera to scan pairing QR codes.'
+                          : (error.errorDetails?.message ?? "The device camera could not be opened. Check that no other app is using it."),
+                      primaryAction: ElevatedButton.icon(
+                        onPressed: isPerm ? _retryPermission : _retryStart,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.limeGreen,
+                          foregroundColor: AppColors.nearBlack,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        icon: const Icon(Icons.refresh_rounded, size: 18),
+                        label: Text(
+                          isPerm ? 'Grant Permission' : 'Try Camera Again',
+                          style: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      secondaryAction: isPerm
+                          ? OutlinedButton.icon(
+                              onPressed: () => openAppSettings(),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.white70,
+                                side: const BorderSide(color: Color(0xFF333333)),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.settings_outlined, size: 16),
+                              label: const Text('Open App Settings', style: TextStyle(fontFamily: 'Poppins')),
+                            )
+                          : null,
+                    );
+                  },
+                ),
+
+                // Targeting Viewfinder frame
+                Center(
+                  child: Container(
+                    width: scanSize,
+                    height: scanSize,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.limeGreen, width: 2.5),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.limeGreen.withValues(alpha: 0.16),
+                          blurRadius: 24,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                if (_cameraError != null)
-                  _cameraIssue(
-                    title: _permissionNeedsSettings
-                        ? 'Camera access is off'
-                        : 'Camera unavailable',
-                    body: _cameraError!,
-                    showSettings: _permissionNeedsSettings,
-                  )
-                else if (_starting)
-                  ColoredBox(
-                    color: Colors.black54,
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.limeGreen,
+
+                // Subtitle Instruction
+                Positioned(
+                  left: 24,
+                  right: 24,
+                  bottom: 28,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text(
+                      'Point camera at the pairing QR code on the other device',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12.5,
+                        color: Colors.white,
                       ),
                     ),
-                  )
-                else if (_cameraReady) ...[
-                  Center(
+                  ),
+                ),
+
+                // Invalid QR warning banner
+                if (_invalidQrMessage != null)
+                  Positioned(
+                    top: 16,
+                    left: 20,
+                    right: 20,
                     child: Container(
-                      width: scanSize,
-                      height: scanSize,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                       decoration: BoxDecoration(
-                        border: Border.all(
-                          color: AppColors.limeGreen,
-                          width: 3,
-                        ),
-                        borderRadius: BorderRadius.circular(Radii.card),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.limeGreen.withValues(alpha: 0.18),
-                            blurRadius: 24,
+                        color: const Color(0xFF261414),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFF87171)),
+                        boxShadow: const [
+                          BoxShadow(color: Colors.black54, blurRadius: 10, offset: Offset(0, 4)),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.warning_amber_rounded, color: Color(0xFFF87171), size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _invalidQrMessage!,
+                              style: const TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 12,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, size: 16, color: Colors.white70),
+                            onPressed: () => setState(() => _invalidQrMessage = null),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
                           ),
                         ],
                       ),
                     ),
                   ),
-                  Positioned(
-                    left: 20,
-                    right: 20,
-                    bottom: 24,
-                    child: Text(
-                      "Point the camera at the QR code on the other device's Connect screen.",
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.white,
-                        shadows: const [
-                          Shadow(color: Colors.black, blurRadius: 8),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
               ],
             );
           },
-        ),
-      ),
-    );
-  }
-
-  Widget _cameraIssue({
-    required String title,
-    required String body,
-    required bool showSettings,
-  }) {
-    return ColoredBox(
-      color: Colors.black87,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 380),
-          child: Padding(
-            padding: const EdgeInsets.all(Space.xl),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.no_photography_outlined,
-                  color: Colors.white70,
-                  size: 44,
-                ),
-                const SizedBox(height: Space.l),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium
-                      ?.copyWith(color: Colors.white),
-                ),
-                const SizedBox(height: Space.s),
-                Text(
-                  body,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(color: Colors.white70, height: 1.4),
-                ),
-                const SizedBox(height: Space.l),
-                FilledButton.icon(
-                  onPressed: _starting ? null : _startCamera,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Try camera again'),
-                ),
-                if (showSettings) ...[
-                  const SizedBox(height: Space.s),
-                  TextButton.icon(
-                    onPressed: _openSettings,
-                    icon: const Icon(Icons.settings_outlined),
-                    label: const Text('Open app settings'),
-                  ),
-                ],
-              ],
-            ),
-          ),
         ),
       ),
     );

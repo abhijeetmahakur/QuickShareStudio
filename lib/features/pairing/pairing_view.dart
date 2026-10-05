@@ -997,70 +997,72 @@ class _PairingViewState extends State<PairingView> {
               onSubmitted: (_) => _connectWithCode(),
             ),
           ] else ...[
-            // QR Scanner / Payload Input Box
+            // QR Scanner
             Container(
-              padding: const EdgeInsets.all(16),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
               decoration: BoxDecoration(
                 color: _cardSurface,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: _borderSubtleLight),
               ),
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 10,
-                    runSpacing: 8,
-                    children: [
-                      if (cameraScanSupported) ElevatedButton.icon(
-                        onPressed: _scanWithCamera,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _panelCharcoal,
-                          foregroundColor: _limeAccent,
-                          side: BorderSide(color: _limeAccent),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        ),
-                        icon: const Icon(Icons.camera_alt_rounded, size: 16),
-                        label: const Text('Scan with Camera', style: TextStyle(fontFamily: 'Poppins', fontSize: 12)),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          // Paste from clipboard
-                          final data = await Clipboard.getData('text/plain');
-                          if (data?.text != null && data!.text!.trim().isNotEmpty) {
-                            _qrPayloadController.text = data.text!.trim();
-                            _connectWithQrPayload(data.text!.trim());
-                          } else {
-                            setState(() => _statusError = 'Clipboard is empty or does not contain text.');
-                          }
-                        },
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: _softLightGray,
-                          side: BorderSide(color: _borderSubtleLight),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        ),
-                        icon: const Icon(Icons.paste_rounded, size: 15),
-                        label: const Text('Paste QR', style: TextStyle(fontFamily: 'Poppins', fontSize: 12)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _qrPayloadController,
-                    style: TextStyle(fontFamily: 'Poppins', fontSize: 12, color: _primaryText),
-                    decoration: InputDecoration(
-                      hintText: 'quickshare://pair?code=... or QR link',
-                      hintStyle: TextStyle(fontFamily: 'Poppins', color: _softLightGray.withValues(alpha: 0.4), fontSize: 11),
-                      filled: true,
-                      fillColor: _panelCharcoal,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: _borderSubtleLight)),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: _borderSubtleLight)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: _limeAccent)),
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: _panelCharcoal,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _limeAccent.withValues(alpha: 0.3)),
                     ),
-                    onSubmitted: (v) => _connectWithQrPayload(v),
+                    child: Icon(Icons.qr_code_scanner_rounded, color: _limeAccent, size: 28),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Scan Pairing QR Code',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: _primaryText,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Point your camera at the QR code shown on the other device to pair instantly.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 12,
+                      color: _softLightGray,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      key: const Key('scan_with_camera_button'),
+                      onPressed: _isConnecting ? null : _scanWithCamera,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _limeAccent,
+                        foregroundColor: _bgNearBlack,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      icon: const Icon(Icons.camera_alt_rounded, size: 18),
+                      label: Text(
+                        _isConnecting ? 'Connecting...' : 'Scan with Camera',
+                        style: const TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),

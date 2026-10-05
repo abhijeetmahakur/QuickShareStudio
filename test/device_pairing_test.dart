@@ -342,5 +342,29 @@ void main() {
       expect(prefs.containsKey('pairing_code'), isFalse);
       expect(prefs.containsKey('pairing_session_id'), isFalse);
     });
+
+    testWidgets('11. Scan QR code tab shows dedicated camera option and completely omits Paste QR', (tester) async {
+      tester.view.physicalSize = const Size(1280, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(createPairingScreen(engine));
+      await tester.pumpAndSettle();
+
+      // Tap "Scan QR code" tab
+      await tester.tap(find.text('Scan QR code'));
+      await tester.pumpAndSettle();
+
+      // Verify "Paste QR" is completely absent
+      expect(find.text('Paste QR'), findsNothing);
+
+      // Verify dedicated camera option is present
+      expect(find.text('Scan Pairing QR Code'), findsOneWidget);
+      expect(find.text('Scan with Camera'), findsOneWidget);
+      expect(find.byKey(const Key('scan_with_camera_button')), findsOneWidget);
+    });
   });
 }
