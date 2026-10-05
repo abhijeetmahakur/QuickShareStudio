@@ -1,5 +1,7 @@
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import '../../core/widgets/demo_mode_notice.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -9,6 +11,7 @@ import '../../data/models/transfer_item.dart';
 import '../../core/utils/format_utils.dart';
 import '../../core/constants.dart';
 import '../../core/widgets/hover_card.dart';
+import '../../core/services/clipboard_image_service.dart';
 
 /// Item representing a selected file ready for transmission
 class SelectedFileItem {
@@ -97,6 +100,7 @@ class _SendFilesViewState extends State<SendFilesView> {
   final TextEditingController _directCodeController = TextEditingController();
   bool _showDirectConnect = false;
   bool _isProbing = false;
+  bool _isDragging = false;
 
   @override
   void initState() {
@@ -116,10 +120,40 @@ class _SendFilesViewState extends State<SendFilesView> {
 
   @override
   void dispose() {
+    ClipboardImageService.setWebPasteHandler(null);
     _ipController.dispose();
     _portController.dispose();
     _directCodeController.dispose();
     super.dispose();
+  }
+
+  void _handleWebPaste(String? dataUrl) {
+    if (!mounted || dataUrl == null || !dataUrl.startsWith('data:') || !dataUrl.contains(',')) return;
+    try {
+      final mime = dataUrl.substring(5, dataUrl.indexOf(';')).toLowerCase();
+      final isPdf = mime == 'application/pdf';
+      final isImage = mime.startsWith('image/');
+      if (!isPdf && !isImage) return;
+      final bytes = base64Decode(dataUrl.substring(dataUrl.indexOf(',') + 1));
+      final ext = isPdf ? 'pdf' : (mime.split('/').last == 'jpeg' ? 'jpg' : mime.split('/').last);
+      _addOrReplaceFile('Pasted_${DateTime.now().millisecondsSinceEpoch}.$ext', bytes, isPdf ? 'pdf' : 'photo');
+    } catch (_) {
+      if (mounted) setState(() => _errorMessage = 'Could not read the pasted file.');
+    }
+  }
+
+  Future<void> _addDroppedFiles(DropDoneDetails details) async {
+    for (final file in details.files) {
+      final category = SelectedFileItem.detectCategory(file.name);
+      if (category != 'pdf' && category != 'photo') continue;
+      try {
+        final bytes = await file.readAsBytes();
+        if (mounted) _addOrReplaceFile(file.name, bytes, category);
+      } catch (_) {
+        if (mounted) setState(() => _errorMessage = 'Could not read ${file.name}.');
+      }
+    }
+    if (mounted) setState(() => _isDragging = false);
   }
 
   // -------------------------------------------------------------
@@ -482,6 +516,7 @@ class _SendFilesViewState extends State<SendFilesView> {
 
   @override
   Widget build(BuildContext context) {
+    ClipboardImageService.setWebPasteHandler(_handleWebPaste);
     final engine = context.watch<TransferEngine>();
     final crossService = CrossDeviceTransferService();
 
@@ -507,7 +542,11 @@ class _SendFilesViewState extends State<SendFilesView> {
           ),
         ),
       ),
-      body: SingleChildScrollView(
+      body: DropTarget(
+        onDragEntered: (_) => setState(() => _isDragging = true),
+        onDragExited: (_) => setState(() => _isDragging = false),
+        onDragDone: _addDroppedFiles,
+        child: Stack(children: [SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
         child: Center(
           child: ConstrainedBox(
@@ -566,6 +605,11 @@ class _SendFilesViewState extends State<SendFilesView> {
             ),
           ),
         ),
+      ), if (_isDragging) Positioned.fill(child: IgnorePointer(child: Container(
+        color: const Color(0xAA111318),
+        alignment: Alignment.center,
+        child: const Text('Drop screenshots or PDFs to add them', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
+      ))) ]),
       ),
     );
   }

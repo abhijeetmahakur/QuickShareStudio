@@ -4,7 +4,7 @@ import 'dart:math';
 /// The code this device shows so another device can connect to it (on the LAN, or over the
 /// internet as PeerJS peer `qs-<code>`).
 ///
-/// Credentials are temporary: the code, its one-time nonce and the peer ID die when the code
+/// Credentials are temporary: the code, its nonce and the peer ID expire when the room
 /// expires ([ttl], 5 minutes by default), is used, is regenerated, or after too many failed
 /// handshakes. A code is never handed out twice in the same app run.
 class PairingSession {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'quickshare-studio-pwa-v2';
+const CACHE_NAME = 'quickshare-studio-pwa-v3';
 const ASSETS_TO_CACHE = [
   './',
   'manifest.json',
@@ -15,7 +15,7 @@ self.addEventListener('install', (event) => {
       return cache.addAll(ASSETS_TO_CACHE).catch((err) => {
         console.warn('Pre-cache warning:', err);
       });
-    }).then(() => self.skipWaiting())
+    })
   );
 });
 
@@ -31,6 +31,10 @@ self.addEventListener('activate', (event) => {
       );
     }).then(() => self.clients.claim())
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('fetch', (event) => {

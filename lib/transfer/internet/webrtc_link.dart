@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:async/async.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
 import '../channel.dart';
@@ -145,45 +144,8 @@ class InternetConnection {
   String get verificationCode => channel.verificationCode;
 }
 
-/// Short-lived TURN credentials from Metered (cached for 10 minutes).
-class TurnCredentials {
-  static List<IceServer>? _cached;
-  static DateTime? _fetchedAt;
-
-  static Future<List<IceServer>> fetch(AppConfig config, {http.Client? client}) async {
-    final domain = config.meteredDomain, key = config.meteredApiKey;
-    if (domain == null || key == null) return const [];
-    final fetchedAt = _fetchedAt;
-    if (_cached != null && fetchedAt != null && DateTime.now().difference(fetchedAt) < const Duration(minutes: 10)) {
-      return _cached!;
-    }
-    try {
-      final c = client ?? http.Client();
-      final res = await c
-          .get(Uri.https(domain, '/api/v1/turn/credentials', {'apiKey': key}))
-          .timeout(const Duration(seconds: 5));
-      if (res.statusCode != 200) return const [];
-      final list = (jsonDecode(res.body) as List).cast<Map<String, dynamic>>();
-      _cached = [
-        for (final s in list)
-          IceServer(
-            s['urls'] is List ? (s['urls'] as List).cast<String>() : [s['urls'].toString()],
-            username: s['username']?.toString(),
-            credential: s['credential']?.toString(),
-          ),
-      ];
-      _fetchedAt = DateTime.now();
-      return _cached!;
-    } catch (_) {
-      // Without TURN most connections still work (STUN); strict NATs will fail with noRoute.
-      return const [];
-    }
-  }
-}
-
 Future<RTCPeerConnection> _newPeerConnection(AppConfig config) async {
-  final turn = await TurnCredentials.fetch(config);
-  final servers = config.iceServers(fetchedTurn: turn);
+  final servers = config.iceServers();
   return createPeerConnection({
     'iceServers': [for (final s in servers) s.toMap()],
     'iceTransportPolicy': config.forceRelay ? 'relay' : 'all',

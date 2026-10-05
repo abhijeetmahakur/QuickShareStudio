@@ -30,12 +30,12 @@ No account and no cloud storage: files go directly from one device to the other,
 | **PDF Studio** | Three-panel editor (pages · live preview · layout controls) with 1, 2, 3, 4, 6, 8 and 10 images per page or a custom grid; A3/A4/A5/Letter paper; printer-safe margins; borders, captions, headers/footers and page numbers; optional searchable text layer from captions. Work is kept while you switch sections. |
 | **PDF Tools** | Lossless merge and split (pages are copied, not re-rendered, so text stays selectable and files stay small); compression (72 / 100 / 150 DPI JPEG profiles); OCR for screenshots and scanned PDFs (English, Hindi) with text export and searchable-PDF output; file converter with whole-folder support. |
 | **Save, print & share** | Exports save straight to `Downloads/QuickShare`; *Print / Preview* opens the file in your system PDF viewer; *Share* opens the OS share sheet. |
-| **Connect devices** | One 6-digit code (or QR code) works three ways: **same Wi-Fi**, **over the internet** (different networks; WebRTC with a TURN relay fallback) and **Bluetooth** (Android 10+, no network needed). QuickShare tries the Wi-Fi first and falls back automatically. Codes work once and expire after 5 minutes. |
+| **Connect devices** | A 6-digit room code (or QR) supports multiple devices over Wi-Fi or the internet using PeerJS signaling and direct WebRTC data channels; rooms expire after 5 minutes. Bluetooth remains available nearby. Free STUN is used without API keys; restrictive networks may need an optional TURN relay or LAN/Bluetooth fallback. |
 | **File sharing** | Send any number of files of any size. The receiver sees who is sending what and taps **Accept** first. Transfers are end-to-end encrypted, show progress, speed and time left, can be cancelled, resume after a dropped connection, and every file is verified with SHA-256. |
 | **Screenshot sessions** | Group screenshots per lab or experiment (sidebar → *Screenshot Sessions*), with duplicate detection and drag-and-drop reordering. |
 | **Universal clipboard** | Text, links, code and images, previewed before anything is sent. |
 | **Privacy & security** | PIN lock, private mode, configurable download folder and one-click cache purge. |
-| **Updates** | Checks GitHub Releases at launch; Android and the desktop app download, verify and install new versions themselves. |
+| **Updates** | PWA builds deploy to GitHub Pages and prompt when a new service worker is ready. Android and the desktop app check GitHub Releases for verified updates. |
 
 > **Works offline:** PDF tools, OCR (English and Hindi), printing, same-Wi-Fi and Bluetooth sharing need no internet connection. Only internet transfers and update checks go online.
 
@@ -153,8 +153,8 @@ QuickShare explains each permission before Android asks. If you chose *Don't all
 | Problem | What to do |
 |---|---|
 | "Couldn't find the device on this Wi-Fi" | Different networks are fine: tap **Try over internet**. On the same Wi-Fi, check that the router doesn't isolate clients ("AP isolation", guest networks) and that the firewall prompt was allowed. |
-| "No device is online with that code" | The code expired (5 min) or was already used. Ask for the new code. After 5 wrong codes, wait a minute. |
-| "Connecting took too long" / "networks block a direct connection" | Some mobile and office networks need a TURN relay. Configure one (see *Setup: TURN relay* below), or use the same Wi-Fi. |
+| "No device is online with that code" | The room expired (5 min) or its host closed the app. Ask the host to create a new room. After 5 wrong codes, wait a minute. |
+| "Connecting took too long" / "networks block a direct connection" | STUN cannot route through every restrictive firewall/NAT. Use the same Wi-Fi or Bluetooth, or configure an optional TURN relay. |
 | The verification codes differ | Disconnect and connect again. Something is intercepting the connection. |
 | "Internet unavailable" next to the code | This device has no internet or PeerJS Cloud is unreachable; same-Wi-Fi and Bluetooth still work. It reconnects by itself. |
 | Bluetooth: device not listed | On the other phone, *Nearby devices* must be open with *make this phone visible* on. On Android 11 and older, Location must be switched on. |
@@ -184,20 +184,9 @@ Run the desktop bundle locally:
 python scripts/server.py build/web      # then open the printed http://127.0.0.1:<port>
 ```
 
-### Setup: TURN relay (internet transfers on strict networks)
+### Optional TURN relay
 
-Most connections work with the free STUN server alone. Devices behind symmetric NATs (some mobile carriers, office Wi-Fi) need a TURN relay:
-
-1. Create a free account at [Metered](https://www.metered.ca/stun-turn) and create a TURN app.
-2. Copy its domain (e.g. `yourapp.metered.live`) and API key into `.env`:
-   ```
-   METERED_DOMAIN=yourapp.metered.live
-   METERED_API_KEY=...
-   ```
-   (or put static credentials in `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL`).
-3. Build with `--dart-define-from-file=.env`. For releases, add the same keys as repository secrets; the release workflow writes `.env` from them.
-
-TURN credentials end up inside the app (every WebRTC client needs them), so prefer Metered's short-lived credentials (`METERED_API_KEY`) and set usage limits in the Metered dashboard. `.env` itself is never committed.
+The default setup uses Google's free public STUN servers and needs no API key. STUN cannot guarantee a route through every firewall or symmetric NAT. A relay can be configured with static `TURN_URLS`, `TURN_USERNAME`, and `TURN_CREDENTIAL` values at build time; these credentials ship in the app bundle, so use a provider and access policy you trust. Without a relay, users can try the same Wi-Fi or Bluetooth.
 
 ### Setup: release signing (needed for in-app Android updates)
 

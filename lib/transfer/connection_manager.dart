@@ -255,8 +255,7 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   void _onInternetConnection(InternetConnection c) {
-    // A code works once: the next device needs a fresh one.
-    _engine.regeneratePairingCode();
+    // Keep the hosted room open so multiple devices can join until the normal TTL expires.
     _adopt(
       channel: c.channel,
       frames: c.frames,

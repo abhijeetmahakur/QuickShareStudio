@@ -6,8 +6,6 @@ name: Release
 # (or run it manually from the Actions tab).
 #
 # Optional repository secrets (Settings -> Secrets and variables -> Actions):
-#   METERED_DOMAIN, METERED_API_KEY       TURN relay credentials fetched at runtime, or
-#   TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL   static TURN credentials
 #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
 #       Signs every APK with the same key. Without it each build gets a throwaway debug key,
 #       and Android refuses to install one release over another (in-app updates fail).
@@ -31,26 +29,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Write .env from secrets (never committed)
-        env:
-          METERED_DOMAIN: ${{ secrets.METERED_DOMAIN }}
-          METERED_API_KEY: ${{ secrets.METERED_API_KEY }}
-          TURN_URLS: ${{ secrets.TURN_URLS }}
-          TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
-          TURN_CREDENTIAL: ${{ secrets.TURN_CREDENTIAL }}
-        run: |
-          {
-            echo "METERED_DOMAIN=$METERED_DOMAIN"
-            echo "METERED_API_KEY=$METERED_API_KEY"
-            echo "TURN_URLS=$TURN_URLS"
-            echo "TURN_USERNAME=$TURN_USERNAME"
-            echo "TURN_CREDENTIAL=$TURN_CREDENTIAL"
-          } > .env
-
       - name: Build web bundle
         run: |
           flutter pub get
-          flutter build web --release --wasm --no-web-resources-cdn --dart-define-from-file=.env
+          flutter build web --release --wasm --no-web-resources-cdn
 
       - name: Package Windows (x64) zip
         run: |
@@ -94,22 +76,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Write .env from secrets (never committed)
-        env:
-          METERED_DOMAIN: ${{ secrets.METERED_DOMAIN }}
-          METERED_API_KEY: ${{ secrets.METERED_API_KEY }}
-          TURN_URLS: ${{ secrets.TURN_URLS }}
-          TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
-          TURN_CREDENTIAL: ${{ secrets.TURN_CREDENTIAL }}
-        run: |
-          {
-            echo "METERED_DOMAIN=$METERED_DOMAIN"
-            echo "METERED_API_KEY=$METERED_API_KEY"
-            echo "TURN_URLS=$TURN_URLS"
-            echo "TURN_USERNAME=$TURN_USERNAME"
-            echo "TURN_CREDENTIAL=$TURN_CREDENTIAL"
-          } > .env
-
       - name: Release signing key (from secrets)
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -133,7 +99,7 @@ jobs:
       - name: Build APK
         run: |
           flutter pub get
-          flutter build apk --release --dart-define-from-file=.env
+          flutter build apk --release
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/QuickShareStudio-Android.apk
 
