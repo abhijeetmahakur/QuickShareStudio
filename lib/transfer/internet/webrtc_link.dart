@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:async/async.dart';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 
@@ -81,15 +82,19 @@ class DataChannelFrameChannel implements FrameChannel {
   @override
   Future<void> send(Uint8List frame) async {
     if (!isOpen) throw ChannelClosedException();
-    await dc.send(RTCDataChannelMessage.fromBinary(frame));
     while (isOpen && (dc.bufferedAmount ?? 0) > highWaterMark) {
       final waiter = Completer<void>();
       _waiters.add(waiter);
       // The event is the fast path; the poll guards against a missed event.
-      await Future.any([waiter.future, closed, Future<void>.delayed(const Duration(milliseconds: 50))]);
-      if ((dc.bufferedAmount ?? 0) > highWaterMark) await dc.getBufferedAmount();
+      await Future.any([waiter.future, closed, Future<void>.delayed(const Duration(milliseconds: 30))]);
+      if ((dc.bufferedAmount ?? 0) > highWaterMark) {
+        try {
+          await dc.getBufferedAmount();
+        } catch (_) {}
+      }
     }
     if (!isOpen) throw ChannelClosedException();
+    await dc.send(RTCDataChannelMessage.fromBinary(frame));
   }
 
   @override
@@ -282,11 +287,14 @@ Future<InternetConnection> connectToPeer({
   required List<int> secret,
   required CancelToken token,
 }) async {
+  debugPrint('[QuickShare] Joiner connecting to target peer ID: $targetPeerId (mode: $mode)');
   final signaling = PeerJsSignaling(config: config, peerId: PeerJsSignaling.randomSenderId());
   token.onCancel(signaling.close);
   try {
     await signaling.open();
+    debugPrint('[QuickShare] Joiner signaling connected to ${config.peerServerHost}');
   } on SignalingException catch (e) {
+    debugPrint('[QuickShare] Signaling exception during connect: ${e.message}');
     if (token.isCancelled) throw CancelledException();
     throw ConnectException(ConnectFailure.signalingUnavailable, e.message);
   }
@@ -309,11 +317,17 @@ Future<InternetConnection> connectToPeer({
 
   pc.onIceCandidate = (c) {
     if (c.candidate != null && c.candidate!.isNotEmpty) {
+      final cand = c.candidate!;
+      final typeMatch = RegExp(r'typ (\w+)').firstMatch(cand);
+      final candType = typeMatch?.group(1) ?? 'unknown';
+      debugPrint('[QuickShare] Joiner ICE candidate generated: type=$candType');
       signaling.sendCandidate(targetPeerId, connectionId: connectionId, candidate: _candidateJson(c));
     }
   };
   pc.onIceConnectionState = (s) {
+    debugPrint('[QuickShare] Joiner ICE state: $s');
     if (s == RTCIceConnectionState.RTCIceConnectionStateFailed && !opened.isCompleted) {
+      debugPrint('[QuickShare] Joiner ICE state failed with target $targetPeerId');
       opened.completeError(ConnectException(
         ConnectFailure.noRoute,
         config.hasTurn
@@ -322,23 +336,33 @@ Future<InternetConnection> connectToPeer({
       ));
     }
   };
+  pc.onConnectionState = (s) {
+    debugPrint('[QuickShare] Joiner PeerConnection state: $s');
+  };
   // DataChannelFrameChannel installed its own state handler (closing); chain onto it.
   final closeHandler = dc.onDataChannelState;
   dc.onDataChannelState = (s) {
+    debugPrint('[QuickShare] Joiner DataChannel state: $s');
     if (s == RTCDataChannelState.RTCDataChannelOpen && !opened.isCompleted) opened.complete();
     closeHandler?.call(s);
   };
 
   final sub = signaling.messages.listen((m) async {
     if (m.type == 'EXPIRE' && m.src == targetPeerId && !opened.isCompleted) {
+      debugPrint('[QuickShare] PeerJS returned EXPIRE for $targetPeerId (host not online)');
       opened.completeError(ConnectException(
         ConnectFailure.wrongCode,
         'No device is online with that code. Check the code, or ask for a new one if it expired.',
       ));
     } else if (m.type == 'ANSWER' && m.connectionId == connectionId && m.sdp != null) {
+      debugPrint('[QuickShare] Received answer SDP from $targetPeerId');
       await pc.setRemoteDescription(RTCSessionDescription(m.sdp, 'answer'));
       await candidates.flush();
     } else if (m.type == 'CANDIDATE' && m.connectionId == connectionId && m.candidate != null) {
+      final cand = m.candidate!['candidate']?.toString() ?? '';
+      final typeMatch = RegExp(r'typ (\w+)').firstMatch(cand);
+      final candType = typeMatch?.group(1) ?? 'unknown';
+      debugPrint('[QuickShare] Received remote candidate type: $candType');
       await candidates.add(_candidateFrom(m.candidate!));
     }
   });
@@ -420,20 +444,47 @@ class InternetHost {
       await signaling.close();
       return;
     }
+    debugPrint('[QuickShare] Host registered successfully with PeerJS ID: $peerId');
+
+    // Keep host online while Ready to Receive: auto-reconnect if signaling drops
+    unawaited(signaling.closed.then((_) {
+      if (!_stopped) {
+        debugPrint('[QuickShare] Host signaling dropped for peer $peerId. Reconnecting in 2 seconds...');
+        Timer(const Duration(seconds: 2), () {
+          if (!_stopped) {
+            start().catchError((e) {
+              debugPrint('[QuickShare] Host auto-reconnect error: $e');
+            });
+          }
+        });
+      }
+    }));
+
     final buffers = <String, _CandidateBuffer>{};
     signaling.messages.listen((m) async {
       final id = m.connectionId;
       final src = m.src;
       if (id == null || src == null || _stopped) return;
       if (m.type == 'OFFER' && m.sdp != null && !_pending.containsKey(id)) {
+        debugPrint('[QuickShare] Host received incoming connection offer from $src (connectionId: $id)');
         if (_pending.length >= 4) return; // a burst of strangers; ignore the excess
         final pc = await _newPeerConnection(config);
         _pending[id] = pc;
         final buffer = buffers[id] = _CandidateBuffer(pc);
         pc.onIceCandidate = (c) {
           if (c.candidate != null && c.candidate!.isNotEmpty) {
+            final cand = c.candidate!;
+            final typeMatch = RegExp(r'typ (\w+)').firstMatch(cand);
+            final candType = typeMatch?.group(1) ?? 'unknown';
+            debugPrint('[QuickShare] Host generated ICE candidate: type=$candType');
             signaling.sendCandidate(src, connectionId: id, candidate: _candidateJson(c));
           }
+        };
+        pc.onIceConnectionState = (s) {
+          debugPrint('[QuickShare] Host ICE state: $s');
+        };
+        pc.onConnectionState = (s) {
+          debugPrint('[QuickShare] Host PeerConnection state: $s');
         };
         pc.onDataChannel = (dc) => _accept(id, pc, dc);
         // Give up on half-open attempts.
@@ -447,6 +498,10 @@ class InternetHost {
         await pc.setLocalDescription(answer);
         signaling.sendAnswer(src, connectionId: id, sdp: answer.sdp!);
       } else if (m.type == 'CANDIDATE' && m.candidate != null) {
+        final cand = m.candidate!['candidate']?.toString() ?? '';
+        final typeMatch = RegExp(r'typ (\w+)').firstMatch(cand);
+        final candType = typeMatch?.group(1) ?? 'unknown';
+        debugPrint('[QuickShare] Host received remote candidate type: $candType');
         await buffers[id]?.add(_candidateFrom(m.candidate!));
       }
     });

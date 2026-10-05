@@ -25,9 +25,34 @@ class IceServer {
 }
 
 class AppConfig {
+  static const List<IceServer> defaultStunServers = [
+    IceServer([
+      'stun:stun.l.google.com:19302',
+      'stun:stun1.l.google.com:19302',
+      'stun:stun2.l.google.com:19302',
+      'stun:stun3.l.google.com:19302',
+      'stun:stun4.l.google.com:19302',
+      'stun:openrelay.metered.ca:80',
+    ]),
+  ];
+
+  static const List<IceServer> defaultTurnServers = [
+    IceServer(
+      [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+        'turns:openrelay.metered.ca:443',
+        'turns:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    ),
+  ];
+
   const AppConfig({
-    this.stunServers = const [IceServer(['stun:stun.l.google.com:19302'])],
-    this.turnServers = const [],
+    this.stunServers = defaultStunServers,
+    this.turnServers = defaultTurnServers,
     this.meteredDomain,
     this.meteredApiKey,
     this.forceRelay = false,
@@ -39,10 +64,10 @@ class AppConfig {
     this.chunkSize = 16 * 1024,
     this.codeTtl = const Duration(minutes: 5),
     this.maxAttempts = 5,
-    this.lanTimeout = const Duration(seconds: 5),
+    this.lanTimeout = const Duration(seconds: 3),
     this.internetConnectTimeout = const Duration(seconds: 20),
     this.acceptTimeout = const Duration(minutes: 2),
-    this.resumeGracePeriod = const Duration(minutes: 2),
+    this.resumeGracePeriod = const Duration(minutes: 5),
     this.flowControlWindow = 4 * 1024 * 1024,
     this.maxTransferBytes = 8 * 1024 * 1024 * 1024,
     this.maxFilesPerTransfer = 500,
@@ -162,11 +187,14 @@ class AppConfig {
 
     List<String> split(String v) => v.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
 
+    final userStun = split(stun);
+    final userTurn = split(turnUrls);
+
     return AppConfig(
-      stunServers: [if (split(stun).isNotEmpty) IceServer(split(stun))],
-      turnServers: [
-        if (split(turnUrls).isNotEmpty) IceServer(split(turnUrls), username: turnUser, credential: turnCredential),
-      ],
+      stunServers: userStun.isNotEmpty ? [IceServer(userStun)] : defaultStunServers,
+      turnServers: userTurn.isNotEmpty
+          ? [IceServer(userTurn, username: turnUser, credential: turnCredential)]
+          : defaultTurnServers,
       meteredDomain: meteredDomain.isEmpty ? null : meteredDomain,
       meteredApiKey: meteredKey.isEmpty ? null : meteredKey,
       forceRelay: forceRelay,

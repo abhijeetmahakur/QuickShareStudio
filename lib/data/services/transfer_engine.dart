@@ -116,8 +116,28 @@ class TransferEngine extends ChangeNotifier {
     localIp = link.localIp;
     localPort = link.localPort;
     ConnectionManager.instance.attachLan(link);
-    // New code + QR so they carry the real address other devices must use.
-    _refreshPairingSession();
+    final session = currentPairingSession;
+    if (session == null || session.isExpired) {
+      _refreshPairingSession();
+    } else {
+      currentPairingSession = PairingSession(
+        sessionId: session.sessionId,
+        numericCode: session.numericCode,
+        hostDeviceName: localDeviceName,
+        hostIp: localIp,
+        hostPort: localPort,
+        createdAt: session.createdAt,
+        nonce: session.nonce,
+        ttl: session.ttl,
+        isActive: session.isActive,
+        isApproved: session.isApproved,
+        failedAttempts: session.failedAttempts,
+        maxFailedAttempts: session.maxFailedAttempts,
+      );
+      _syncPeerSession();
+      ConnectionManager.instance.hostCode(currentPairingSession!);
+      notifyListeners();
+    }
   }
 
   void _syncPeerSession() {

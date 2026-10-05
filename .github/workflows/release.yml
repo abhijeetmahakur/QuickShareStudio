@@ -1,16 +1,8 @@
 name: Release
 
-# Builds downloadable packages and attaches them to a GitHub Release, together with
-# latest.json + SHA256SUMS.txt, which the in-app updater reads.
-# Trigger: push a version tag, e.g.  git tag v2.0.0 && git push origin v2.0.0
+# Builds downloadable packages and attaches them to a GitHub Release.
+# Trigger: push a version tag, e.g. git tag v1.0.1 && git push origin v1.0.1
 # (or run it manually from the Actions tab).
-#
-# Optional repository secrets (Settings -> Secrets and variables -> Actions):
-#   METERED_DOMAIN, METERED_API_KEY       TURN relay credentials fetched at runtime, or
-#   TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL   static TURN credentials
-#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
-#       Signs every APK with the same key. Without it each build gets a throwaway debug key,
-#       and Android refuses to install one release over another (in-app updates fail).
 on:
   push:
     tags: ["v*"]
@@ -20,9 +12,9 @@ permissions:
   contents: write
 
 jobs:
-  desktop-packages:
-    name: Windows & Linux packages
-    runs-on: ubuntu-latest
+  windows-release:
+    name: Windows Release
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -31,55 +23,41 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Write .env from secrets (never committed)
-        env:
-          METERED_DOMAIN: ${{ secrets.METERED_DOMAIN }}
-          METERED_API_KEY: ${{ secrets.METERED_API_KEY }}
-          TURN_URLS: ${{ secrets.TURN_URLS }}
-          TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
-          TURN_CREDENTIAL: ${{ secrets.TURN_CREDENTIAL }}
-        run: |
-          {
-            echo "METERED_DOMAIN=$METERED_DOMAIN"
-            echo "METERED_API_KEY=$METERED_API_KEY"
-            echo "TURN_URLS=$TURN_URLS"
-            echo "TURN_USERNAME=$TURN_USERNAME"
-            echo "TURN_CREDENTIAL=$TURN_CREDENTIAL"
-          } > .env
+      - name: Enable Windows Desktop
+        run: flutter config --enable-windows-desktop
 
-      - name: Build web bundle
-        run: |
-          flutter pub get
-          flutter build web --release --wasm --no-web-resources-cdn --dart-define-from-file=.env
+      - name: Install dependencies
+        run: flutter pub get
 
-      - name: Package Windows (x64) zip
-        run: |
-          PKG=dist/QuickShareStudio-Windows
-          mkdir -p "$PKG"
-          cp -r build/web "$PKG/web"
-          cp scripts/server.py scripts/launch.ps1 scripts/launch.vbs app_icon.ico "$PKG/"
-          cp LICENSE VERSION "$PKG/"
-          (cd dist && zip -qr QuickShareStudio-Windows-x64.zip QuickShareStudio-Windows)
+      - name: Build Windows Release
+        run: flutter build windows --release
 
-      - name: Package Linux tarball
+      - name: Package Windows Zip and Installer
+        shell: pwsh
         run: |
-          PKG=dist/QuickShareStudio-Linux
-          mkdir -p "$PKG"
-          cp -r build/web "$PKG/web"
-          cp scripts/server.py scripts/launch.sh "$PKG/"
-          chmod +x "$PKG/launch.sh"
-          cp LICENSE VERSION "$PKG/"
-          tar -C dist -czf dist/QuickShareStudio-Linux.tar.gz QuickShareStudio-Linux
+          New-Item -ItemType Directory -Path "dist" -Force | Out-Null
+
+          # Create zip of the native Windows release build
+          Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "dist\QuickShareStudio-Windows-x64.zip" -Force
+          Write-Host "Created dist\QuickShareStudio-Windows-x64.zip"
+
+          # Compile Inno Setup installer if iscc is available on the runner
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\iscc.exe"
+          if (Test-Path $iscc) {
+            $tag = "${{ github.ref_name }}".TrimStart('v')
+            & $iscc /DMyAppVersion="$tag" windows\installer\quickshare.iss
+            Write-Host "Compiled Inno Setup installer: dist\QuickShareStudio-Windows-Setup.exe"
+          } else {
+            Write-Warning "Inno Setup (iscc.exe) not found on runner; skipping setup exe generation."
+          }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-packages
-          path: |
-            dist/QuickShareStudio-Windows-x64.zip
-            dist/QuickShareStudio-Linux.tar.gz
+          name: windows-packages
+          path: dist/*
 
-  android:
-    name: Android APK
+  android-release:
+    name: Android Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,22 +71,6 @@ jobs:
         with:
           channel: stable
           cache: true
-
-      - name: Write .env from secrets (never committed)
-        env:
-          METERED_DOMAIN: ${{ secrets.METERED_DOMAIN }}
-          METERED_API_KEY: ${{ secrets.METERED_API_KEY }}
-          TURN_URLS: ${{ secrets.TURN_URLS }}
-          TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
-          TURN_CREDENTIAL: ${{ secrets.TURN_CREDENTIAL }}
-        run: |
-          {
-            echo "METERED_DOMAIN=$METERED_DOMAIN"
-            echo "METERED_API_KEY=$METERED_API_KEY"
-            echo "TURN_URLS=$TURN_URLS"
-            echo "TURN_USERNAME=$TURN_USERNAME"
-            echo "TURN_CREDENTIAL=$TURN_CREDENTIAL"
-          } > .env
 
       - name: Release signing key (from secrets)
         env:
@@ -127,24 +89,24 @@ jobs:
             } > android/key.properties
             echo "Signing with the release key."
           else
-            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: the APK is debug-signed and in-app updates between releases will be rejected by Android."
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: building with debug signature."
           fi
 
       - name: Build APK
         run: |
           flutter pub get
-          flutter build apk --release --dart-define-from-file=.env
+          flutter build apk --release
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/QuickShareStudio-Android.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: android-apk
+          name: android-packages
           path: dist/QuickShareStudio-Android.apk
 
   publish:
     name: Publish GitHub Release
-    needs: [desktop-packages, android]
+    needs: [windows-release, android-release]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
@@ -155,13 +117,13 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Checksums, update manifest and release notes
-        run: python3 tool/release/make_manifest.py "${GITHUB_REF_NAME#v}"
+      - name: Generate Checksums & Manifest
+        run: |
+          python3 tool/release/make_manifest.py "${GITHUB_REF_NAME#v}" dist || true
 
-      - uses: softprops/action-gh-release@v2
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
           body_path: dist/notes.md
           files: |
-            dist/QuickShareStudio-*
-            dist/latest.json
-            dist/SHA256SUMS.txt
+            dist/*

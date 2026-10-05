@@ -113,10 +113,19 @@ class _UpdateDialogState extends State<UpdateDialog> {
                       Text(
                         'SOFTWARE UPDATE AVAILABLE',
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 10,
                           fontWeight: FontWeight.bold,
                           letterSpacing: 1.3,
                           color: AppColors.secondary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Update available v${update.version}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary,
                         ),
                       ),
                       const SizedBox(height: 3),

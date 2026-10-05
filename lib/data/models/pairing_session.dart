@@ -101,8 +101,8 @@ class PairingSession {
 
   String get code => numericCode;
 
-  /// PeerJS peer ID other devices connect to over the internet.
-  String get peerId => 'qs-$numericCode';
+  /// PeerJS peer ID other devices connect to over the internet (the 6-digit code).
+  String get peerId => numericCode;
 
   /// Formatted numeric code: "123 - 456" for display
   String get formattedCode {
@@ -112,9 +112,9 @@ class PairingSession {
     return numericCode;
   }
 
-  /// QR payload: the code plus the one-time nonce, and the LAN address for direct pairing.
+  /// QR payload: the code and peerId plus the one-time nonce, and the LAN address for direct pairing.
   String get qrPayload =>
-      'quickshare://pair?code=$numericCode&n=$nonce&sid=$sessionId&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}';
+      'quickshare://pair?code=$numericCode&peerId=$numericCode&n=$nonce&sid=$sessionId&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}';
 
   /// App Deep Link for pairing confirmation
   String get appDeepLink => qrPayload;

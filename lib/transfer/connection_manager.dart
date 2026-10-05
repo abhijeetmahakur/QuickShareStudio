@@ -183,7 +183,7 @@ class ConnectionManager extends ChangeNotifier {
     _lanSub = link.incomingSessions.listen(_onIncomingLan);
   }
 
-  /// Hosts [session]'s code on PeerJS (`qs-<code>`); the previous code's peer is destroyed.
+  /// Hosts [session]'s code on PeerJS (numeric 6-digit code); the previous code's peer is destroyed.
   Future<void> hostCode(PairingSession session) async {
     if (!_started) return;
     if (_hostedPeerId == session.peerId && (_host?.isListening ?? false)) return;
@@ -393,7 +393,11 @@ class ConnectionManager extends ChangeNotifier {
     final resumeId = link.resumeId;
     if (!_started || resumeId == null || _resumeHosts.containsKey(resumeId)) return;
     final interrupted = _engine.activeTransfers.any((t) =>
-        !t.isSender && t.peerDeviceId == link.device.id && t.status == TransferStatus.paused);
+        !t.isSender &&
+        t.peerDeviceId == link.device.id &&
+        (t.status == TransferStatus.paused ||
+            t.status == TransferStatus.transferring ||
+            t.status == TransferStatus.queued));
     if (!interrupted) return;
     final host = InternetHost(
       config: config,
@@ -434,7 +438,7 @@ class ConnectionManager extends ChangeNotifier {
       internet: (token) => _connectInternet(code, qrNonce, token),
       isOnline: () => isOnline(),
       lanTimeout: config.lanTimeout,
-      autoInternet: settings.autoFallback,
+      autoInternet: true,
     );
   }
 
@@ -506,7 +510,7 @@ class ConnectionManager extends ChangeNotifier {
     try {
       final c = await connectToPeer(
         config: config,
-        targetPeerId: 'qs-$code',
+        targetPeerId: code,
         me: me,
         mode: qrNonce != null ? 'qr' : 'code',
         secret: utf8.encode(qrNonce != null ? '$code|$qrNonce' : code),
@@ -606,6 +610,7 @@ class ConnectionManager extends ChangeNotifier {
     );
     _engine.addActiveTransfer(item);
     final tracked = _Tracked(device, method, files, out);
+    tracked.resumeId = link?.resumeId;
     _outgoing[out.transferId] = tracked;
     _watch(tracked);
     unawaited(_run(tracked, session));
@@ -716,6 +721,7 @@ class ConnectionManager extends ChangeNotifier {
         relayed: c.channel.relayed,
         resumeId: resumeId,
       );
+      t.resumeId = resumeId;
       session = link.session;
     } else {
       session = await _sessionFor(t.device);
@@ -883,6 +889,12 @@ class ConnectionManager extends ChangeNotifier {
 
   @visibleForTesting
   void resetForTest() {
+    _started = false;
+    _connectivitySub?.cancel();
+    _rehostTimer?.cancel();
+    _host = null;
+    _hostedPeerId = null;
+    _hosting = false;
     links.clear();
     pendingOffers.clear();
     _outgoing.clear();

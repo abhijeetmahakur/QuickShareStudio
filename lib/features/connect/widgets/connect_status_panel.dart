@@ -12,7 +12,7 @@ class ConnectStatusPanel extends StatelessWidget {
     super.key,
     required this.state,
     required this.onCancel,
-    required this.onTryInternet,
+    this.onTryInternet,
     required this.onUseBluetooth,
     required this.onRetry,
     this.bluetoothAvailable = false,
@@ -21,7 +21,7 @@ class ConnectStatusPanel extends StatelessWidget {
 
   final ConnectFlowState state;
   final VoidCallback onCancel;
-  final VoidCallback onTryInternet;
+  final VoidCallback? onTryInternet;
   final VoidCallback onUseBluetooth;
   final VoidCallback onRetry;
   final bool bluetoothAvailable;
@@ -103,10 +103,8 @@ class ConnectStatusPanel extends StatelessWidget {
           if (showOptions || state.failure == ConnectFailure.wrongCode || state.failure == ConnectFailure.noRoute) ...[
             const SizedBox(height: Space.m),
             Wrap(spacing: Space.s, runSpacing: Space.s, children: [
-              _button('Try over internet', Icons.public_rounded, offline ? null : onTryInternet,
-                  tooltip: offline ? 'No internet connection' : null),
-              _button('Use Bluetooth', Icons.bluetooth_rounded, bluetoothAvailable ? onUseBluetooth : null,
-                  tooltip: bluetoothAvailable ? null : bluetoothUnavailableReason),
+              if (bluetoothAvailable)
+                _button('Use Bluetooth', Icons.bluetooth_rounded, onUseBluetooth),
               _button('Retry', Icons.refresh_rounded, onRetry, primary: true),
             ]),
           ],

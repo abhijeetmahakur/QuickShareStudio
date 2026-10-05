@@ -234,12 +234,15 @@ class _SessionPdfDialogState extends State<SessionPdfDialog> with SingleTickerPr
     }
   }
 
-  void _retryTransfer() {
+  Future<void> _retryTransfer() async {
     final engine = _engine ?? context.read<TransferEngine>();
     if (_currentTransfer != null) {
-      engine.retryTransfer(_currentTransfer!.transferId);
+      final newTransfer = await engine.retryTransfer(_currentTransfer!.transferId);
       if (mounted) {
         setState(() {
+          if (newTransfer != null) {
+            _currentTransfer = newTransfer;
+          }
           _currentStep = SessionPdfStep.transferring;
           _isTransferring = true;
         });
@@ -289,7 +292,7 @@ class _SessionPdfDialogState extends State<SessionPdfDialog> with SingleTickerPr
             _currentStep = SessionPdfStep.completed;
             _isTransferring = false;
           });
-        } else if (active.status == TransferStatus.failed && _currentStep != SessionPdfStep.interrupted) {
+        } else if ((active.status == TransferStatus.failed || active.status == TransferStatus.paused) && _currentStep != SessionPdfStep.interrupted) {
           setState(() {
             _currentStep = SessionPdfStep.interrupted;
             _isTransferring = false;
@@ -1104,34 +1107,99 @@ class _SessionPdfDialogState extends State<SessionPdfDialog> with SingleTickerPr
           style: TextStyle(fontSize: 12, color: AppColors.secondaryText),
         ),
         const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isNarrow = constraints.maxWidth < 360;
+
+            final cancelButton = SizedBox(
+              height: 44,
               child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
                 onPressed: () => setState(() => _currentStep = SessionPdfStep.ready),
-                child: const Text('Cancel'),
+                child: const Text(
+                  'Cancel',
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
+            );
+
+            final retryButton = SizedBox(
+              height: 44,
               child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
                 onPressed: _retryTransfer,
-                child: const Text('Retry'),
+                child: const Text(
+                  'Retry',
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ElevatedButton.icon(
+            );
+
+            final resumeButton = SizedBox(
+              height: 44,
+              child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: AppColors.onLimeText,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                icon: const Icon(Icons.play_arrow, size: 18),
-                label: const Text('Resume', style: TextStyle(fontWeight: FontWeight.bold)),
                 onPressed: _resumeTransfer,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.play_arrow, size: 16),
+                    SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        'Resume',
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            );
+
+            if (isNarrow) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  resumeButton,
+                  const SizedBox(height: 8),
+                  retryButton,
+                  const SizedBox(height: 8),
+                  cancelButton,
+                ],
+              );
+            }
+
+            return Row(
+              children: [
+                Expanded(child: cancelButton),
+                const SizedBox(width: 8),
+                Expanded(child: retryButton),
+                const SizedBox(width: 8),
+                Expanded(child: resumeButton),
+              ],
+            );
+          },
         ),
       ],
     );

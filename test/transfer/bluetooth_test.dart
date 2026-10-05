@@ -280,31 +280,30 @@ void main() {
       expect(find.text('Trying over internet...'), findsOneWidget);
     });
 
-    testWidgets('LAN failure shows the new message and the three buttons', (tester) async {
+    testWidgets('LAN failure shows the new message and buttons', (tester) async {
       final taps = await pump(tester, const ConnectFlowState(phase: ConnectPhase.failed, lanFailed: true, failure: ConnectFailure.notFoundOnLan));
       expect(find.text(ConnectFlowState.lanNotFoundMessage), findsOneWidget);
       expect(find.text('No QuickShare devices answered on this network.'), findsNothing);
-      await tester.tap(find.text('Try over internet'));
+      expect(find.text('Try over internet'), findsNothing);
       await tester.tap(find.text('Use Bluetooth'));
       await tester.tap(find.text('Retry'));
-      expect(taps, ['internet', 'bluetooth', 'retry']);
+      expect(taps, ['bluetooth', 'retry']);
     });
 
-    testWidgets('offline: internet disabled, Bluetooth offered', (tester) async {
+    testWidgets('offline: Bluetooth offered if available', (tester) async {
       final taps = await pump(
         tester,
         const ConnectFlowState(phase: ConnectPhase.failed, lanFailed: true, online: false, failure: ConnectFailure.noInternet, detail: "You're offline."),
       );
-      await tester.tap(find.text('Try over internet'));
+      expect(find.text('Try over internet'), findsNothing);
       await tester.tap(find.text('Use Bluetooth'));
       expect(taps, ['bluetooth']);
       expect(find.text("You're offline."), findsOneWidget);
     });
 
-    testWidgets('Bluetooth button disabled where unsupported', (tester) async {
-      final taps = await pump(tester, const ConnectFlowState(phase: ConnectPhase.failed, lanFailed: true), bluetooth: false);
-      await tester.tap(find.text('Use Bluetooth'));
-      expect(taps, isEmpty);
+    testWidgets('Bluetooth button hidden where unsupported', (tester) async {
+      await pump(tester, const ConnectFlowState(phase: ConnectPhase.failed, lanFailed: true), bluetooth: false);
+      expect(find.text('Use Bluetooth'), findsNothing);
     });
   });
 }

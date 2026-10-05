@@ -17,7 +17,7 @@ void main() {
         expect(seen.add(s.numericCode), isTrue, reason: 'code ${s.numericCode} was reused');
         expect(s.nonce.length, greaterThanOrEqualTo(21)); // 16 random bytes
         nonces.add(s.nonce);
-        expect(s.peerId, 'qs-${s.numericCode}');
+        expect(s.peerId, s.numericCode);
       }
       expect(nonces.length, 2000);
     });
@@ -26,6 +26,7 @@ void main() {
       final s = PairingSession.create(hostDeviceName: 'Lab PC', hostIp: '192.168.1.5', hostPort: 8088);
       final uri = Uri.parse(s.qrPayload);
       expect(uri.queryParameters['code'], s.numericCode);
+      expect(uri.queryParameters['peerId'], s.numericCode);
       expect(uri.queryParameters['n'], s.nonce);
       expect(uri.queryParameters['host'], '192.168.1.5');
       expect(s.formattedCode.contains(s.nonce), isFalse);

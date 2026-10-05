@@ -60,11 +60,18 @@ def main():
     packages, sums = {}, []
     for key, name in PACKAGES.items():
         path = os.path.join(dist, name)
-        if not os.path.isfile(path):
-            raise SystemExit(f"missing package {path}")
-        digest = sha256(path)
-        packages[key] = {"name": name, "sha256": digest, "size": os.path.getsize(path)}
-        sums.append(f"{digest}  {name}\n")
+        if os.path.isfile(path):
+            digest = sha256(path)
+            packages[key] = {"name": name, "sha256": digest, "size": os.path.getsize(path)}
+            sums.append(f"{digest}  {name}\n")
+    
+    # Also include any additional files like QuickShareStudio-Windows-Setup.exe
+    setup_name = "QuickShareStudio-Windows-Setup.exe"
+    setup_path = os.path.join(dist, setup_name)
+    if os.path.isfile(setup_path):
+        digest = sha256(setup_path)
+        packages["windows_setup"] = {"name": setup_name, "sha256": digest, "size": os.path.getsize(setup_path)}
+        sums.append(f"{digest}  {setup_name}\n")
 
     manifest = {"version": version, "minSupportedVersion": minimum, "notes": notes, "packages": packages}
     with open(os.path.join(dist, "latest.json"), "w", encoding="utf-8") as f:

@@ -33,7 +33,6 @@ class PairingView extends StatefulWidget {
 
 class _PairingViewState extends State<PairingView> {
   final TextEditingController _codeController = TextEditingController();
-  final TextEditingController _qrPayloadController = TextEditingController();
   PairingDisplayMode _activeMode = PairingDisplayMode.qrCode;
   ConnectMode _connectMode = ConnectMode.sixDigitCode;
 
@@ -56,7 +55,6 @@ class _PairingViewState extends State<PairingView> {
   @override
   void dispose() {
     _codeController.dispose();
-    _qrPayloadController.dispose();
     super.dispose();
   }
 
@@ -138,8 +136,8 @@ class _PairingViewState extends State<PairingView> {
     }
   }
 
-  Future<void> _connectWithQrPayload([String? explicitPayload]) async {
-    final payload = (explicitPayload ?? _qrPayloadController.text).trim();
+  Future<void> _connectWithQrPayload(String rawPayload) async {
+    final payload = rawPayload.trim();
 
     setState(() {
       _statusError = null;
@@ -148,7 +146,7 @@ class _PairingViewState extends State<PairingView> {
 
     if (payload.isEmpty) {
       setState(() {
-        _statusError = 'Please enter or scan a valid QR code payload.';
+        _statusError = 'Please scan a valid QR code.';
       });
       return;
     }
@@ -178,7 +176,6 @@ class _PairingViewState extends State<PairingView> {
     setState(() => _isConnecting = false);
 
     if (success) {
-      _qrPayloadController.clear();
       setState(() {
         _statusSuccess = 'Device paired successfully from QR code! Added to Connected Devices.';
         _statusError = null;
@@ -226,7 +223,6 @@ class _PairingViewState extends State<PairingView> {
   void _onLiveResult(DeviceModel? device) {
     if (device == null || !mounted) return;
     _codeController.clear();
-    _qrPayloadController.clear();
     HapticFeedback.mediumImpact();
     final code = device.verificationCode;
     setState(() {
@@ -238,7 +234,6 @@ class _PairingViewState extends State<PairingView> {
   Future<void> _scanWithCamera() async {
     final value = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const QrScannerPage()));
     if (value == null || !mounted) return;
-    _qrPayloadController.text = value;
     await _connectWithQrPayload(value);
   }
 
@@ -996,6 +991,37 @@ class _PairingViewState extends State<PairingView> {
               },
               onSubmitted: (_) => _connectWithCode(),
             ),
+            const SizedBox(height: 16),
+            // Pair / Connect Action Button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isConnecting ? null : _connectWithCode,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _limeAccent,
+                  foregroundColor: _bgNearBlack,
+                  disabledBackgroundColor: _limeAccent.withValues(alpha: 0.4),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                icon: _isConnecting
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: _bgNearBlack),
+                      )
+                    : const Icon(Icons.link_rounded, size: 20),
+                label: Text(
+                  _isConnecting ? 'Authenticating...' : 'Pair / Connect',
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ),
           ] else ...[
             // QR Scanner
             Container(
@@ -1131,80 +1157,39 @@ class _PairingViewState extends State<PairingView> {
             ),
 
           if (_isLive(engine))
-            ListenableBuilder(
-              listenable: ConnectionManager.instance,
-              builder: (context, _) {
-                final manager = ConnectionManager.instance;
-                return ConnectStatusPanel(
-                  state: manager.connectState,
-                  onCancel: () {
-                    manager.cancelConnect();
-                    setState(() => _isConnecting = false);
-                  },
-                  onTryInternet: () async {
-                    setState(() => _isConnecting = true);
-                    final device = await manager.tryInternet();
-                    if (!mounted) return;
-                    setState(() => _isConnecting = false);
-                    _onLiveResult(device);
-                  },
-                  onUseBluetooth: _openNearby,
-                  onRetry: () async {
-                    setState(() => _isConnecting = true);
-                    final device = await manager.retryConnect();
-                    if (!mounted) return;
-                    setState(() => _isConnecting = false);
-                    _onLiveResult(device);
-                  },
-                  bluetoothAvailable: BluetoothSupport.platformSupported,
-                  bluetoothUnavailableReason: BluetoothSupport.unsupportedReason,
-                );
-              },
-            ),
-
-          // Pair / Connect Action Button
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _isConnecting
-                  ? null
-                  : () {
-                      if (_connectMode == ConnectMode.sixDigitCode) {
-                        _connectWithCode();
-                      } else {
-                        _connectWithQrPayload();
-                      }
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: ListenableBuilder(
+                listenable: ConnectionManager.instance,
+                builder: (context, _) {
+                  final manager = ConnectionManager.instance;
+                  return ConnectStatusPanel(
+                    state: manager.connectState,
+                    onCancel: () {
+                      manager.cancelConnect();
+                      setState(() => _isConnecting = false);
                     },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _limeAccent,
-                foregroundColor: _bgNearBlack,
-                disabledBackgroundColor: _limeAccent.withValues(alpha: 0.4),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                elevation: 0,
-              ),
-              icon: _isConnecting
-                  ? SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: _bgNearBlack),
-                    )
-                  : const Icon(Icons.link_rounded, size: 20),
-              label: Text(
-                _isConnecting
-                    ? 'Authenticating...'
-                    : _connectMode == ConnectMode.sixDigitCode
-                        ? 'Pair / Connect'
-                        : 'Pair with QR Code',
-                style: const TextStyle(
-                  fontFamily: 'Poppins',
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
-                ),
+                    onTryInternet: () async {
+                      setState(() => _isConnecting = true);
+                      final device = await manager.tryInternet();
+                      if (!mounted) return;
+                      setState(() => _isConnecting = false);
+                      _onLiveResult(device);
+                    },
+                    onUseBluetooth: _openNearby,
+                    onRetry: () async {
+                      setState(() => _isConnecting = true);
+                      final device = await manager.retryConnect();
+                      if (!mounted) return;
+                      setState(() => _isConnecting = false);
+                      _onLiveResult(device);
+                    },
+                    bluetoothAvailable: BluetoothSupport.platformSupported,
+                    bluetoothUnavailableReason: BluetoothSupport.unsupportedReason,
+                  );
+                },
               ),
             ),
-          ),
-          const SizedBox(height: 20),
 
           // Security & Expiration Info Note
           Container(

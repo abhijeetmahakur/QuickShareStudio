@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:async/async.dart';
+import 'package:flutter/foundation.dart';
 
 import '../app_config.dart';
 import '../channel.dart';
@@ -572,6 +573,9 @@ class _IncomingRun {
         _fileBytes += data.length;
         _written += data.length;
         _meter.add(_written);
+        if (_expectedSeq % 40 == 0 || _fileBytes >= size) {
+          debugPrint('[QuickShare] Chunk received: file $_file, seq ${f.sequence}, bytes: ${data.length}, total: $_fileBytes/$size');
+        }
         if (_written - _lastAck >= 256 * 1024) await _ack();
         emit(force: false);
       case FrameType.fileEnd:
@@ -792,6 +796,9 @@ class OutgoingTransfer {
           }
           hasher.add(chunk);
           await _race(session.channel.send(Frame.encodeChunk(tag: tag, fileIndex: i, sequence: seq, data: chunk)));
+          if (seq % 40 == 0 || sent + chunk.length >= _totalBytes) {
+            debugPrint('[QuickShare] Chunk sent: file $i, seq $seq, bytes: ${chunk.length}, total: ${sent + chunk.length}/$_totalBytes');
+          }
           seq++;
           sent += chunk.length;
         }
@@ -807,13 +814,17 @@ class OutgoingTransfer {
         }
         _completedFiles = i + 1;
       }
+      debugPrint('[QuickShare] All files sent successfully: $_totalBytes bytes');
       _emit(_snapshot.copyWith(phase: TransferPhase.completed, bytesDone: _totalBytes, fileIndex: files.length - 1, error: ''));
     } on _Abort catch (a) {
+      debugPrint('[QuickShare] Outgoing transfer aborted: ${a.message}');
       final resumable = a.phase == TransferPhase.interrupted && _accepted && !_cancelRequested;
       _emit(_snapshot.copyWith(phase: a.phase, error: a.message, resumable: resumable));
     } on ChannelClosedException {
+      debugPrint('[QuickShare] Outgoing transfer channel closed unexpectedly.');
       _emit(_snapshot.copyWith(phase: TransferPhase.interrupted, error: 'Connection lost.', resumable: _accepted && !_cancelRequested));
     } catch (e) {
+      debugPrint('[QuickShare] Outgoing transfer error: $e');
       _emit(_snapshot.copyWith(phase: TransferPhase.failed, error: 'Could not read the file to send.', resumable: false));
     } finally {
       session._outgoing.remove(tag);
