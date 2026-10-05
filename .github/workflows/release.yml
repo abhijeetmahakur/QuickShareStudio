@@ -19,6 +19,10 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Enable Developer Mode for symlinks
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -Name "AllowDevelopmentWithoutDevLicense" -PropertyType DWord -Value 1 -Force
       - name: Enable Windows desktop
         run: flutter config --enable-windows-desktop
       - name: Install dependencies
