@@ -21,14 +21,15 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Real device-to-device networking: native builds run their own LAN server; the
   // browser-based desktop app goes through the local launcher server (server.py).
-  // Internet (PeerJS/WebRTC) and Bluetooth are handled by the ConnectionManager.
+  // Start ConnectionManager immediately so internet pairing (PeerJS) is ready at once
+  unawaited(ConnectionManager.instance.start());
+
   final lanReady = kIsWeb
       ? BridgePeerLink.connect().then((link) {
           if (link != null) TransferEngine().attachPeerLink(link);
         })
       : CrossDeviceTransferService().initialize();
   lanReady.whenComplete(() async {
-    await ConnectionManager.instance.start();
     // Existing users learn about new versions (and must update below the minimum).
     await AppUpdateService().checkOnLaunch();
   });

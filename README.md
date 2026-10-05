@@ -4,12 +4,13 @@
 
 **Cross-platform file sharing, universal clipboard and PDF studio for labs, classrooms and developers.**
 
-[![CI](https://github.com/abhijeetmahakur/QuickShareStudio/actions/workflows/ci.yml/badge.svg)](https://github.com/abhijeetmahakur/QuickShareStudio/actions/workflows/ci.yml)
+[![CI](https://github.com/abhijeetmahakur/QuickShareStudio/actions/workflows/ci.yml)](https://github.com/abhijeetmahakur/QuickShareStudio/actions/workflows/ci.yml)
+[![Release](https://github.com/abhijeetmahakur/QuickShareStudio/actions/workflows/release.yml/badge.svg)](https://github.com/abhijeetmahakur/QuickShareStudio/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/abhijeetmahakur/QuickShareStudio?label=release)](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Flutter](https://img.shields.io/badge/Flutter-3.47-02569B?logo=flutter)](https://flutter.dev)
 
-[Download](#-download--install) · [Features](#-features) · [Build from source](#-build-from-source) · [Contributing](#-contributing)
+[Download](#-download--install) · [Features](#-features) · [Auto-Updates](#-auto-updates--releases) · [Build from source](#-build-from-source) · [Architecture](#-architecture) · [Contributing](#-contributing)
 
 <img src="docs/screenshots/dashboard.png" alt="QuickShare Studio dashboard" width="900">
 
@@ -17,220 +18,179 @@
 
 ---
 
-## Overview
+## 📖 Overview
 
-QuickShare Studio turns a pile of screenshots into a clean, print-ready PDF in a few clicks, and gives you the tools around it: merging, splitting and compressing PDFs, a universal clipboard, and pairing with your other devices by QR code or 6-digit code.
+**QuickShare Studio** turns a pile of screenshots into a clean, print-ready PDF in a few clicks, and provides all the tools around it: lossless merging, splitting, and compressing PDFs, a universal clipboard, and zero-configuration device pairing via QR code or a 6-digit session pin.
 
-No account and no cloud storage: files go directly from one device to the other, end-to-end encrypted, on the same Wi-Fi, over the internet, or over Bluetooth.
+**No account, no sign-in, and no cloud storage required:** files go directly between devices with end-to-end encryption over local Wi-Fi, Bluetooth, or a WebRTC data channel. Internet pairing uses public STUN servers; STUN cannot guarantee a connection through every firewall or restrictive NAT, and no TURN relay or storage server is bundled.
+
+---
 
 ## ✨ Features
 
 | Area | What you get |
 |---|---|
-| **PDF Studio** | Three-panel editor (pages · live preview · layout controls) with 1, 2, 3, 4, 6, 8 and 10 images per page or a custom grid; A3/A4/A5/Letter paper; printer-safe margins; borders, captions, headers/footers and page numbers; optional searchable text layer from captions. Work is kept while you switch sections. |
-| **PDF Tools** | Lossless merge and split (pages are copied, not re-rendered, so text stays selectable and files stay small); compression (72 / 100 / 150 DPI JPEG profiles); OCR for screenshots and scanned PDFs (English, Hindi) with text export and searchable-PDF output; file converter with whole-folder support. |
-| **Save, print & share** | Exports save straight to `Downloads/QuickShare`; *Print / Preview* opens the file in your system PDF viewer; *Share* opens the OS share sheet. |
-| **Connect devices** | A 6-digit room code (or QR) supports multiple devices over Wi-Fi or the internet using PeerJS signaling and direct WebRTC data channels; rooms expire after 5 minutes. Bluetooth remains available nearby. Free STUN is used without API keys; restrictive networks may need an optional TURN relay or LAN/Bluetooth fallback. |
-| **File sharing** | Send any number of files of any size. The receiver sees who is sending what and taps **Accept** first. Transfers are end-to-end encrypted, show progress, speed and time left, can be cancelled, resume after a dropped connection, and every file is verified with SHA-256. |
-| **Screenshot sessions** | Group screenshots per lab or experiment (sidebar → *Screenshot Sessions*), with duplicate detection and drag-and-drop reordering. |
-| **Universal clipboard** | Text, links, code and images, previewed before anything is sent. |
-| **Privacy & security** | PIN lock, private mode, configurable download folder and one-click cache purge. |
-| **Updates** | PWA builds deploy to GitHub Pages and prompt when a new service worker is ready. Android and the desktop app check GitHub Releases for verified updates. |
+| **PDF Studio** | Three-panel live workspace (pages · real-time preview · layout presets) supporting 1, 2, 3, 4, 6, 8, and 10 images per page or custom grid layouts; A3, A4, A5, and Letter paper sizes; printer-safe margins; custom borders, captions, headers/footers, and page numbers. Work is preserved across navigation tabs. |
+| **PDF Tools** | Lossless merge and split (pages are copied directly so text stays selectable and file sizes stay minimal); compression (72 / 100 / 150 DPI JPEG profiles); OCR for screenshots and scanned documents (English and Hindi) with text extraction and searchable PDF output; multi-format batch file converter. |
+| **Save, Print & Share** | Exports directly to `Downloads/QuickShare`; *Print / Preview* triggers the native OS print engine; *Share* opens the system share sheet. |
+| **Device Pairing** | Create a room with a 6-digit code and QR, then let multiple devices join by code or scan. Room codes expire after 5 minutes. WebRTC data channels send files directly; local Wi-Fi and Bluetooth (Android 10+) are also available. |
+| **Fast File Transfers** | Transfer multiple files of any size with end-to-end encryption (X25519 + AES-256-GCM). Features interactive progress bars, live transfer speed, ETA, connection resumption on network drops, and SHA-256 cryptographic verification for every file. |
+| **Universal Clipboard** | Sync text, code snippets, URLs, and clipboard images between devices with preview verification before transmission. |
+| **Screenshot Sessions** | Group screenshots by experiment, lecture, or project with automatic duplicate detection and drag-and-drop reordering. |
+| **Native Windows Shell** | Fully embedded custom application icon in `.exe`, desktop shortcuts, Start Menu, taskbar, and top-left title bar (`WM_SETICON`). |
+| **In-App Auto-Updates** | Checks GitHub Releases on launch and every 4 hours while running. Displays an update prompt with release notes, downloads the new installer/package with progress indicator, and applies the update smoothly. |
 
-> **Works offline:** PDF tools, OCR (English and Hindi), printing, same-Wi-Fi and Bluetooth sharing need no internet connection. Only internet transfers and update checks go online.
+> **100% Offline Capability:** PDF editing, OCR extraction, printing, local Wi-Fi transfers, and Bluetooth sharing require zero internet connection. The internet is only used for remote WebRTC connections and release checks.
 
 ---
 
 ## 📥 Download & Install
 
-Pre-built packages are published on the **[Releases page](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest)**.
+Pre-compiled packages and installers are published on the **[Releases Page](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest)**.
 
-| Platform | Package | Requirements |
+| Platform | Package | Description |
 |---|---|---|
-| 🪟 **Windows 10/11** | `QuickShareStudio-Windows-x64.zip` | [Python 3.10+](https://www.python.org/downloads/), Google Chrome or Microsoft Edge |
-| 🐧 **Linux** (x64) | `QuickShareStudio-Linux.tar.gz` | Python 3, Google Chrome / Chromium / Edge |
-| 🤖 **Android** | `QuickShareStudio-Android.apk` | Permission to install apps from your browser/file manager |
-| 🍎 **iOS / iPadOS** | Build from source (see below) | A Mac with Xcode |
-| 🌐 **Web / PWA** | Install via browser (Chrome / Edge / Safari) | Any modern browser with PWA support |
+| 🪟 **Windows 10/11** | `QuickShareStudio-Windows-Setup.exe`<br>`QuickShareStudio-Windows-x64.zip` | Native Windows installer with Start Menu/Desktop shortcuts, or portable release zip bundle. |
+| 🤖 **Android** | `QuickShareStudio-Android.apk` | Native APK with background transfer service and camera QR scanner. |
+| 🐧 **Linux** (x64) | `QuickShareStudio-Linux.tar.gz` | Portable Linux bundle with desktop launcher script. |
+| 🍎 **macOS / iOS** | Build from source | Xcode build target for macOS and iPhone/iPad. |
+| 🌐 **Web / PWA** | Web browser / PWA | Installable Progressive Web App via Chrome, Edge, or Safari. |
 
-> [!NOTE]
-> **PWA App Icon Refresh:** Web browsers aggressively cache PWA installation manifests and icons. If you have an already-installed copy of QuickShare Studio on your device, it must be uninstalled and reinstalled to refresh the cached home screen icon, app switcher icon, and splash screen with the new logo.
+---
 
-> **Existing installs:** Release **v2.0.1** includes the new logo, camera scanner fixes, and responsive layout improvements. The v2.0 in-app updater can offer the update to existing Android, Windows, and Linux installs. Versions before 2.0 need one manual update first. iOS users need a newly built app installed. PWA users may need to reinstall the app if the browser keeps showing the old icon.
+### 🪟 Windows Installation
 
-### 🪟 Windows
+#### Option 1: Installer (Recommended)
+1. Download **`QuickShareStudio-Windows-Setup.exe`** from the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest).
+2. Run the setup wizard. It installs QuickShare Studio into your user programs directory, creates Desktop & Start Menu shortcuts with the custom app icon, and registers the app in Windows Settings.
 
-1. Install **Python 3.10 or newer** from [python.org](https://www.python.org/downloads/). On the first installer screen, tick **"Add python.exe to PATH"**.
-2. Download **`QuickShareStudio-Windows-x64.zip`** from the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest).
-3. Right-click the zip → **Extract All…** and choose a permanent folder, for example `C:\Apps\QuickShareStudio`.
-4. Open the extracted folder and double-click **`launch.vbs`**. QuickShare Studio opens in its own app window.
+#### Option 2: Portable Zip
+1. Download **`QuickShareStudio-Windows-x64.zip`** from the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest).
+2. Extract the archive into your preferred directory (e.g., `C:\Apps\QuickShareStudio`).
+3. Launch `quickshare.exe`.
 
-**Optional: install with Start Menu & Desktop shortcuts.** Clone the repository and run the installer script from PowerShell. It builds the app and registers it under *Settings → Apps → Installed apps* (requires the [Flutter SDK](https://docs.flutter.dev/get-started/install/windows)):
+---
 
-```powershell
-git clone https://github.com/abhijeetmahakur/QuickShareStudio.git
-cd QuickShareStudio
-powershell -ExecutionPolicy Bypass -File .\scripts\install_quickshare.ps1
-```
+### 🤖 Android Installation
 
-To uninstall, use *Settings → Apps → Installed apps → QuickShare Studio → Uninstall*.
+1. Open the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest) on your mobile device.
+2. Download **`QuickShareStudio-Android.apk`**.
+3. Open the APK. If prompted, grant permission to install unknown apps for your browser or file manager (*Settings → Apps → Special app access → Install unknown apps*).
+4. Tap **Install** and open the application.
 
-### 🐧 Linux
+---
+
+### 🐧 Linux Installation
 
 ```bash
-# 1. Prerequisites (Debian/Ubuntu shown; use your distro's package manager otherwise)
-sudo apt install python3 chromium      # or install Google Chrome
-
-# 2. Download and extract the latest release
+# 1. Download and extract the latest Linux package
 wget https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest/download/QuickShareStudio-Linux.tar.gz
 tar -xzf QuickShareStudio-Linux.tar.gz
 cd QuickShareStudio-Linux
 
-# 3. Launch
+# 2. Launch
 ./launch.sh
 ```
 
-Exported files are saved to `~/Downloads/QuickShare`. To add a menu entry, create a desktop launcher that runs the full path to `launch.sh`.
+---
 
-### 🤖 Android
+## 🔄 Auto-Updates & Releases
 
-1. On your phone, open the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest) and download **`QuickShareStudio-Android.apk`**.
-2. Open the downloaded file. If prompted, allow your browser or file manager to **install unknown apps** (*Settings → Apps → Special app access → Install unknown apps*).
-3. Tap **Install**, then **Open**.
+QuickShare Studio includes a built-in update check powered by GitHub Releases. Web/PWA builds are served from [GitHub Pages](https://abhijeetmahakur.github.io/QuickShareStudio/) and prompt **“Update available, reload”** when a new service worker is ready. Native Windows builds can download and launch the checksum-verified setup installer. Android checks for an APK and links to its release; Android still requires the APK to have the same signing key as the installed version.
 
-> Because the app is distributed outside the Google Play Store, Google Play Protect may show a warning on first install. Choose **More details → Install anyway**.
+**Android signing:** the release workflow uses a persistent signing key only when all four repository Actions secrets (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`) are configured. Without that key, a new APK cannot update an installation signed with a different key. Users affected by a key change must uninstall the old app and install the new APK; files saved outside the app remain on device. Configure and preserve one key before publishing future Android updates.
 
-### 🍎 iOS / iPadOS
+### How Updates Work in the App
+1. **Single Source of Truth**: The application version is defined directly in [`pubspec.yaml`](pubspec.yaml) and read dynamically via `package_info_plus`.
+2. **Detection**: The app queries `https://api.github.com/repos/abhijeetmahakur/QuickShareStudio/releases/latest` on startup and every 4 hours while running.
+3. **Interactive Dialog**: If a newer version is published, an **Update available** popup shows the new tag version, release notes, and options:
+   - **Update Now**: Streams the download with a progress bar, verifies package checksums, launches the Windows installer in detached mode, and closes the app to apply the upgrade.
+   - **Update Later**: Postpones the prompt so your workflow is never interrupted.
+4. **Resilient**: Network drops and API rate limits are handled completely silently without throwing errors or interrupting offline features.
 
-Apple only allows signed apps on iPhone and iPad, so there is no downloadable `.ipa`. You can install QuickShare Studio on your own device from source:
+### Releasing a New Version (For Developers)
 
-1. On a Mac, install [Xcode](https://apps.apple.com/app/xcode/id497799835) and the [Flutter SDK](https://docs.flutter.dev/get-started/install/macos).
-2. Clone and prepare the project:
-   ```bash
-   git clone https://github.com/abhijeetmahakur/QuickShareStudio.git
-   cd QuickShareStudio
-   flutter pub get
-   open ios/Runner.xcworkspace
-   ```
-3. In Xcode, select the **Runner** target → **Signing & Capabilities**, choose your Apple ID team, and set a unique bundle identifier.
-4. Connect your iPhone/iPad, select it as the run destination, and press **Run** (▶).
-5. On the device, trust the developer certificate under *Settings → General → VPN & Device Management*.
+Releases are built, packaged, and published automatically via GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
 
-> With a free Apple ID, apps installed this way must be re-installed every 7 days; a paid Apple Developer account removes that limit.
+```bash
+# 1. Bump version in pubspec.yaml and update CHANGELOG.md
+# 2. Commit the changes
+git add pubspec.yaml CHANGELOG.md
+git commit -m "Release v2.0.3"
+
+# 3. Tag and push
+git tag v2.0.3
+git push origin main
+git push origin v2.0.3
+```
+
+The GitHub Actions CI/CD pipeline runs on `windows-latest` and `ubuntu-latest`:
+- Compiles the native Windows release (`flutter build windows --release`).
+- Packages `QuickShareStudio-Windows-x64.zip`.
+- Builds the Inno Setup installer (`QuickShareStudio-Windows-Setup.exe`).
+- Builds `QuickShareStudio-Android.apk`.
+- Generates `latest.json` and `SHA256SUMS.txt`.
+- Attaches all assets to the new GitHub Release tag.
 
 ---
 
-## 🔗 Connecting your devices
+## 🔗 Connecting Devices
 
-On the receiving device open **Device Pairing**: it shows a 6-digit code and a QR code (valid for 5 minutes, one use). On the sending device open **Device Pairing → Connect to another device**, type the code or scan the QR code, and tap **Pair / Connect**:
+Create a room from **Device Pairing** to show its 6-digit code and QR (valid for 5 minutes). Other devices can join the same room by scanning or entering the code; multiple members can connect while the room is active. Files are sent directly device-to-device over WebRTC when possible. No API key or file storage server is used. A public STUN server helps peers discover routes, but some firewalls and carrier networks can still prevent a direct connection; use local Wi-Fi or Bluetooth when available.
 
-1. **Same Wi-Fi:** QuickShare looks on your network first ("Looking on your network...").
-2. **Different networks:** if no device answers within about 5 seconds, it tries the internet ("Trying over internet...").
-3. **No connection at all:** choose **Use Bluetooth** (Android 10+, both phones within a few metres). On the receiving phone open *Nearby devices* and turn on *make this phone visible*; on the sending phone tap the device and **Connect**.
+1. **Local Wi-Fi:** QuickShare discovers devices on your local subnet first via UDP beacon and WebSocket handshake.
+2. **Internet:** Peers on different networks attempt a direct WebRTC data channel using public STUN servers. A restrictive firewall or NAT may prevent a direct route; there is no bundled TURN relay.
+3. **Bluetooth:** When offline without any shared network, devices pair over Bluetooth Low Energy (BLE) and transfer data over Wi-Fi Direct.
 
-Both devices show the same **4-digit verification code**: if they differ, disconnect. Then send from **Send Files**, **Universal Clipboard** or a PDF's **Send to Paired Device**; the receiver taps **Accept**. Received files land in `Downloads/QuickShare`.
+---
 
-**First run on Windows:** Windows Defender Firewall asks whether Python may communicate on networks. Allow it on **Private networks**. On Linux, allow TCP 8088 and UDP 8089 if a firewall is active.
+## 🛠 Build from Source
 
-### Permissions (Android)
+### Prerequisites
+- [Flutter SDK 3.47+](https://docs.flutter.dev/get-started/install) (Dart 3.13+)
+- Git
+- For Windows native build: Visual Studio 2022 with C++ desktop workload
+- For Android: Android SDK (Platform 34+, NDK 28)
 
-| Permission | Android version | Why |
-|---|---|---|
-| `BLUETOOTH_SCAN` (*neverForLocation*), `BLUETOOTH_CONNECT`, `BLUETOOTH_ADVERTISE` | 12+ (API 31+) | Find nearby phones and exchange keys over Bluetooth |
-| `BLUETOOTH`, `BLUETOOTH_ADMIN` | 11 and older | Same, install-time on these versions |
-| `ACCESS_FINE_LOCATION` | 12L and older (API ≤ 32) | Required by Android for BLE scans (≤ 11) and Wi-Fi Direct (≤ 12L); not used to read your location |
-| `NEARBY_WIFI_DEVICES` (*neverForLocation*) | 13+ (API 33+) | Wi-Fi Direct, which carries Bluetooth-path transfers |
-| `POST_NOTIFICATIONS` | 13+ | Progress notification for transfers in the background (optional) |
-| `FOREGROUND_SERVICE_DATA_SYNC`, `WAKE_LOCK` | all | Keep a running transfer alive with the screen off |
-| `CAMERA` | all | Scan pairing QR codes (optional; you can type the code) |
-| `REQUEST_INSTALL_PACKAGES` | all | Install updates downloaded by the app |
-| `WRITE_EXTERNAL_STORAGE` | 9 and older | Save received files to Download/QuickShare |
-
-QuickShare explains each permission before Android asks. If you chose *Don't allow* twice, it offers to open the app's settings, where you can allow it.
-
-### Troubleshooting
-
-| Problem | What to do |
-|---|---|
-| "Couldn't find the device on this Wi-Fi" | Different networks are fine: tap **Try over internet**. On the same Wi-Fi, check that the router doesn't isolate clients ("AP isolation", guest networks) and that the firewall prompt was allowed. |
-| "No device is online with that code" | The room expired (5 min) or its host closed the app. Ask the host to create a new room. After 5 wrong codes, wait a minute. |
-| "Connecting took too long" / "networks block a direct connection" | STUN cannot route through every restrictive firewall/NAT. Use the same Wi-Fi or Bluetooth, or configure an optional TURN relay. |
-| The verification codes differ | Disconnect and connect again. Something is intercepting the connection. |
-| "Internet unavailable" next to the code | This device has no internet or PeerJS Cloud is unreachable; same-Wi-Fi and Bluetooth still work. It reconnects by itself. |
-| Bluetooth: device not listed | On the other phone, *Nearby devices* must be open with *make this phone visible* on. On Android 11 and older, Location must be switched on. |
-| Android: "App not installed" when updating | The installed APK was signed with another key: uninstall it (your received files stay), then install the new APK. |
-| A transfer stopped with "Connection lost" | The sender taps **Resume** to continue where it stopped (within 2 minutes), or **Retry** to start over. |
-
-## 🛠 Build from source
-
-**Prerequisites:** [Flutter SDK 3.47+](https://docs.flutter.dev/get-started/install) (Dart 3.13+), Git, Python 3 for the desktop launcher, and the Android SDK (platform 37, NDK 28) for Android builds.
+### Building Locally
 
 ```bash
+# Clone the repository
 git clone https://github.com/abhijeetmahakur/QuickShareStudio.git
 cd QuickShareStudio
+
+# Fetch dependencies
 flutter pub get
-cp .env.example .env        # optional settings, see below; .env is gitignored
+
+# Build native Windows desktop release
+flutter build windows --release
+
+# Build Android APK
+flutter build apk --release
+
+# Run tests
+flutter test
 ```
 
-| Target | Command | Output |
-|---|---|---|
-| Desktop web bundle (Windows/Linux packages) | `flutter build web --release --wasm --no-web-resources-cdn --dart-define-from-file=.env` | `build/web/` |
-| Android APK | `flutter build apk --release --dart-define-from-file=.env` | `build/app/outputs/flutter-apk/app-release.apk` |
-| iOS | `flutter build ios --release --dart-define-from-file=.env` | `build/ios/iphoneos/Runner.app` |
+> [!TIP]
+> **Windows Developer Mode**: Building Flutter Windows apps with plugins requires unprivileged symbolic link support. If prompted, open Windows Developer Settings by running `start ms-settings:developers` in Run (`Win + R`) and toggle **Developer Mode** to **On**.
 
-Run the desktop bundle locally:
+---
 
-```bash
-python scripts/server.py build/web      # then open the printed http://127.0.0.1:<port>
+## 🧼 Clearing Windows Icon Cache
+
+If Windows Explorer displays an older cached icon on shortcuts or `.exe` files after rebuilding:
+
+```cmd
+ie4uinit.exe -show
 ```
 
-### Optional TURN relay
-
-The default setup uses Google's free public STUN servers and needs no API key. STUN cannot guarantee a route through every firewall or symmetric NAT. A relay can be configured with static `TURN_URLS`, `TURN_USERNAME`, and `TURN_CREDENTIAL` values at build time; these credentials ship in the app bundle, so use a provider and access policy you trust. Without a relay, users can try the same Wi-Fi or Bluetooth.
-
-### Setup: release signing (needed for in-app Android updates)
-
-Android installs an update only if it is signed with the same key as the installed app. Create a key once and keep it safe:
-
-```bash
-keytool -genkeypair -v -keystore release.jks -alias quickshare -keyalg RSA -keysize 4096 -validity 10000
-base64 -w0 release.jks     # paste the output into the ANDROID_KEYSTORE_BASE64 secret
-```
-
-Add the repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Locally, create `android/key.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`); both files are gitignored.
-
-### Development
-
-```bash
-flutter run -d chrome      # hot reload while you edit lib/
-flutter analyze            # static analysis
-flutter test               # unit & widget tests
-python test/lan/test_lan_protocol.py   # LAN protocol: two launcher instances
-python test/lan/test_update_flow.py    # desktop self-update
-```
-
-End-to-end internet tests run the real code in Chrome against PeerJS Cloud (see `tool/e2e/`):
-
-```bash
-cd tool/e2e && npm install && cd ../..
-flutter build web --wasm -t tool/e2e/internet_e2e.dart -o build/e2e_web
-node tool/e2e/run_internet_e2e.mjs --bigMb=500            # all scenarios, one page
-node tool/e2e/run_internet_e2e.mjs --two-instance        # two Chrome processes
-node tool/e2e/turn_server.mjs &                           # local TURN server, then:
-node tool/e2e/run_internet_e2e.mjs --scenarios=forced-relay --turn=turn:127.0.0.1:3478 --turnUser=e2e --turnPass=e2e-secret
-```
-
-On Windows, `QuickShareDev.bat` starts a live-reload development session. See [DEV_WORKFLOW.md](DEV_WORKFLOW.md) for details.
-
-### Publishing a release
-
-Releases are built automatically by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Push a version tag and the Windows, Linux and Android packages are attached to a new GitHub Release, together with `latest.json` (version, minimum supported version, SHA-256 of every package) and `SHA256SUMS.txt`, which the in-app updater uses:
-
-```bash
-# 1. bump the version in pubspec.yaml, VERSION and AppConstants.appVersion; add a CHANGELOG section
-# 2. raise MIN_SUPPORTED_VERSION only when older versions must be forced to update
-git tag v2.0.0
-git push origin v2.0.0
+Or run the full explorer cache reset in PowerShell:
+```powershell
+taskkill /f /im explorer.exe
+Remove-Item "$env:LOCALAPPDATA\IconCache.db" -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\iconcache*" -Force -ErrorAction SilentlyContinue
+start explorer.exe
 ```
 
 ---
@@ -239,50 +199,45 @@ git push origin v2.0.0
 
 ```mermaid
 flowchart TB
-  UI["Screens: Device Pairing · Send Files · Nearby devices · Accept prompt"]
-  CM["ConnectionManager<br/>fallback LAN → internet → Bluetooth · attempt limits · accept prompts"]
-  PS["Transfer protocol v2 (PeerSession)<br/>offer → accept → 16 KB chunks + seq → SHA-256 per file · flow control · cancel · resume"]
-  LAN["LAN<br/>UDP discovery + pairing token<br/>WebSocket session"]
-  NET["Internet<br/>PeerJS Cloud signaling<br/>WebRTC data channel (DTLS)<br/>STUN → TURN"]
-  BT["Bluetooth (Android)<br/>BLE GATT key exchange<br/>Wi-Fi Direct TCP socket"]
-  SEC["X25519 + AES-256-GCM<br/>(LAN and Bluetooth)"]
+  UI["UI Layer: Flutter Material 3<br/>PDF Studio · Device Pairing · Send Files · Universal Clipboard"]
+  CM["ConnectionManager<br/>LAN → WebRTC (Internet) → Bluetooth Fallback"]
+  PS["Transfer Protocol v2<br/>Handshake · Frame Sequencing · SHA-256 Checksums · Resumption"]
+  LAN["Local LAN Socket<br/>UDP Discovery + Encrypted WebSocket"]
+  NET["WebRTC DataChannel<br/>DTLS / SCTP + public STUN"]
+  BT["Bluetooth / Wi-Fi Direct<br/>BLE GATT Handshake + Direct Socket"]
+  SEC["End-to-End Encryption<br/>X25519 Key Exchange + AES-256-GCM"]
+  UPD["Auto-Update Engine<br/>GitHub Releases API · PackageInfo · Detached Installer Exec"]
+
   UI --> CM --> PS
   PS --> LAN & NET & BT
   LAN --- SEC
+  NET --- SEC
   BT --- SEC
+  UI --> UPD
 ```
 
-The screens never deal with transports: every connection is a `FrameChannel` carrying the same protocol. The desktop app is the Flutter web build; its launcher (`scripts/server.py`) handles LAN discovery and pairing and only relays the app's encrypted frames.
-
-| Layer | Technology |
+| Layer | Implementation |
 |---|---|
-| UI | Flutter (Material 3), WebAssembly renderer on desktop |
-| State | `provider`; `TransferEngine` (files, history) and `ConnectionManager` (connections, transfers) |
-| Transfer protocol | `lib/transfer/protocol/`: framing, handshake, sender/receiver sessions, incremental SHA-256 |
-| Transports | LAN (`lib/data/services/` + `scripts/server.py`), internet (`lib/transfer/internet/`, `flutter_webrtc`, PeerJS Cloud), Bluetooth (`lib/transfer/bluetooth/` + Kotlin `BluetoothBridge`) |
-| Crypto | `cryptography` (X25519, HKDF, AES-GCM; WebCrypto / platform code where available), `crypto` (SHA-256) |
-| Android platform code | `BluetoothBridge` (BLE, GATT, Wi-Fi Direct), `TransferService` (foreground service, wake lock), `SystemBridge` (open files, verify + install updates) |
-| PDF | `pdf`, `printing`, bundled `pdf-lib`, PDF.js and Tesseract.js in `web/vendor/` |
+| **UI & Styling** | Flutter Material 3, custom Glassmorphism tokens, and responsive multi-window layouts. |
+| **State Management** | `provider` (`TransferEngine`, `ConnectionManager`, `AppUpdateService`, `ThemeService`). |
+| **Transfer Protocol** | `lib/transfer/protocol/`: streaming byte framing, incremental SHA-256 verification, and automatic transfer resumption. |
+| **Networking** | LAN (`shelf`, WebSockets), Internet (`flutter_webrtc`, PeerJS signaling, public STUN), Bluetooth (`BluetoothBridge`). |
+| **Cryptography** | `cryptography` (X25519 ECDH, HKDF, AES-256-GCM authenticated encryption). |
+| **Native Windows Runner** | C++ Win32 runner with `WNDCLASSEX`, `WM_SETICON`, and Visual Studio `Runner.rc` resource embedding. |
+| **PDF Engine** | `pdf`, `printing`, PDF.js, and client-side OCR extraction. |
 
-```
-lib/
-├── app/            # App shell, navigation, theme, update dialog
-├── core/           # Constants, design tokens, services (file actions, background transfers), utilities
-├── data/           # Models and services (TransferEngine, LAN peer link, updates)
-├── features/       # dashboard · pairing · connect · nearby · pdf_* · send · received · clipboard · history · settings
-└── transfer/       # Transport-independent transfer stack (protocol, connection manager, LAN/internet/Bluetooth)
-scripts/            # Desktop launcher (LAN + relay + self-update), installer, dev tooling
-tool/e2e/           # Browser end-to-end tests (PeerJS + WebRTC), local TURN server, phone LAN test
-```
+---
 
 ## 🤝 Contributing
 
-1. Fork the repository and create a branch: `git checkout -b feature/my-change`.
-2. Make your change and keep `flutter analyze` and `flutter test` passing.
-3. Open a pull request describing what changed and why.
+1. Fork the repository and create a feature branch: `git checkout -b feature/my-feature`.
+2. Ensure code compiles and all tests pass: `flutter test`.
+3. Commit your changes and submit a pull request with details on what you modified.
 
-Bug reports and feature requests are welcome in [Issues](https://github.com/abhijeetmahakur/QuickShareStudio/issues).
+Bug reports and feature suggestions are welcome under [GitHub Issues](https://github.com/abhijeetmahakur/QuickShareStudio/issues).
+
+---
 
 ## 📄 License
 
-Released under the [MIT License](LICENSE). © 2026 Abhijeet Mahakur.
+This project is licensed under the [MIT License](LICENSE). © 2026 Abhijeet Mahakur.

@@ -15,6 +15,7 @@ import sys
 PACKAGES = {
     "android": "QuickShareStudio-Android.apk",
     "windows": "QuickShareStudio-Windows-x64.zip",
+    "windows_setup": "QuickShareStudio-Windows-Setup.exe",
     "linux": "QuickShareStudio-Linux.tar.gz",
 }
 
@@ -61,7 +62,7 @@ def main():
     for key, name in PACKAGES.items():
         path = os.path.join(dist, name)
         if not os.path.isfile(path):
-            raise SystemExit(f"missing package {path}")
+            raise SystemExit(f"Required release package is missing: {path}")
         digest = sha256(path)
         packages[key] = {"name": name, "sha256": digest, "size": os.path.getsize(path)}
         sums.append(f"{digest}  {name}\n")

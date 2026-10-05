@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants.dart';
 import '../../core/utils/hash_utils.dart';
@@ -92,7 +93,30 @@ class AppUpdateService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Timer? _periodicTimer;
+
+  void _startPeriodicCheck() {
+    _periodicTimer?.cancel();
+    _periodicTimer = Timer.periodic(const Duration(hours: 4), (_) async {
+      if (!_autoCheckUpdates) return;
+      try {
+        final update = await checkForUpdates(simulateLatency: false);
+        if (update != null && (!_isUpdatePostponed || update.isBelowMinimum)) {
+          launchPrompt = true;
+          notifyListeners();
+        }
+      } catch (_) {}
+    });
+  }
+
   Future<void> _init() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (info.version.isNotEmpty) {
+        _currentVersion = info.version;
+      }
+    } catch (_) {}
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedVersion = prefs.getString('applied_app_version');
@@ -118,7 +142,15 @@ class AppUpdateService extends ChangeNotifier {
         }
       }
     } catch (_) {}
+
+    _startPeriodicCheck();
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _periodicTimer?.cancel();
+    super.dispose();
   }
 
   // -------------------------------------------------------------
@@ -254,7 +286,10 @@ class AppUpdateService extends ChangeNotifier {
                 ? 'Linux'
                 : 'Windows';
     final assets = (data['assets'] as List? ?? []).cast<Map<String, dynamic>>();
-    final asset = assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull;
+    final asset = (wanted == 'Windows')
+        ? (assets.where((a) => (a['name'] as String? ?? '').toLowerCase().contains('windows') && (a['name'] as String? ?? '').toLowerCase().endsWith('.exe')).firstOrNull
+           ?? assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull)
+        : assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull;
     final digest = (asset?['digest'] as String? ?? '');
     var sha256 = digest.startsWith('sha256:') ? digest.substring(7) : '';
     var minSupported = '1.0.0';
@@ -505,6 +540,7 @@ class AppUpdateService extends ChangeNotifier {
   }
 
   void resetTestingState() {
+    _periodicTimer?.cancel();
     _currentVersion = AppConstants.appVersion;
     _latestUpdate = null;
     _publishedRemoteRelease = null;

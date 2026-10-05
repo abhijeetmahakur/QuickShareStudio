@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:async/async.dart';
+import 'package:flutter/foundation.dart';
 
 import '../app_config.dart';
 import '../channel.dart';

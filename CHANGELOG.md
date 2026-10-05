@@ -2,6 +2,17 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.3] - 2026-10-05
+
+### Changed
+- Publish native Windows setup and portable packages, Linux bundle, and Android APK from tagged GitHub releases.
+- Install the Windows app icon and provide desktop and Start Menu shortcuts.
+- Clarify room-code pairing, direct WebRTC transfer, and network limitations in the documentation.
+
+### Fixed
+- Include and checksum every required release artifact in the updater manifest.
+- Improve update installation and pairing camera flow.
+
 ## [2.0.1] - 2026-10-05
 
 ### Changed

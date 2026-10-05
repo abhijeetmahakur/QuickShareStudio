@@ -33,7 +33,8 @@ class PairingQr {
     } on FormatException {
       return null;
     }
-    final code = (uri.queryParameters['code'] ?? '').replaceAll(
+    final rawCode = uri.queryParameters['code'] ?? uri.queryParameters['peerId'] ?? '';
+    final code = rawCode.replaceAll(
       RegExp(r'\D'),
       '',
     );
