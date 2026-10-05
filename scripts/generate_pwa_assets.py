@@ -1,163 +1,137 @@
+"""Generate platform icons from the full QuickShare Studio logo artwork."""
+
 import os
-import cv2
-import numpy as np
+
 from PIL import Image
 
-def generate():
-    logo_path = 'App Logo.png'
-    if not os.path.exists(logo_path):
-        raise FileNotFoundError(f"Cannot find {logo_path}")
 
-    img = cv2.imread(logo_path)
-    
-    # Crop around the symbol
-    y0, y1, x0, x1 = 170, 840, 220, 1060
-    crop = img[y0:y1, x0:x1].copy()
-    h, w = crop.shape[:2]
+SOURCE = "App Logo.png"
+ICON_SIZE = 1024
+BACKGROUND = (205, 231, 254)  # #CDE7FE
 
-    # Initialize GrabCut mask
-    mask = np.full((h, w), cv2.GC_PR_BGD, dtype=np.uint8)
-    mask[:12, :] = cv2.GC_BGD
-    mask[-12:, :] = cv2.GC_BGD
-    mask[:, :12] = cv2.GC_BGD
-    mask[:, -12:] = cv2.GC_BGD
 
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    strong_orange = (hsv[:,:,0] >= 8) & (hsv[:,:,0] <= 30) & (hsv[:,:,1] > 90) & (hsv[:,:,2] > 100)
-    strong_blue = (hsv[:,:,0] >= 90) & (hsv[:,:,0] <= 130) & (hsv[:,:,1] > 90) & (hsv[:,:,2] > 80)
-    strong_dark = (hsv[:,:,2] < 60)
-    strong_cyan = (hsv[:,:,0] >= 90) & (hsv[:,:,0] <= 115) & (hsv[:,:,1] > 90) & (hsv[:,:,2] > 140)
-    mask[strong_orange | strong_blue | strong_dark | strong_cyan] = cv2.GC_FGD
+def render_icon(size: int, safe_zone: bool = False) -> Image.Image:
+    """Scale the complete logo without cropping its badge or wordmark."""
+    source = Image.open(SOURCE).convert("RGBA")
+    source.thumbnail((size, size), Image.Resampling.LANCZOS)
 
-    # Flood fill outer background
-    bg_seeds = (hsv[:,:,1] < 35) & (hsv[:,:,2] > 235)
-    bg_conn = np.zeros((h, w), dtype=np.uint8)
-    bg_conn[bg_seeds] = 255
-    flood = bg_conn.copy()
-    cv2.floodFill(flood, None, (0, 0), 128)
-    mask[flood == 128] = cv2.GC_BGD
+    canvas = Image.new("RGB", (size, size), BACKGROUND)
+    if safe_zone:
+        # Keep the whole square logo inside Android's central circular safe zone.
+        safe_size = int(size * 0.55)
+        logo = Image.open(SOURCE).convert("RGBA")
+        logo.thumbnail((safe_size, safe_size), Image.Resampling.LANCZOS)
+        source = logo
 
-    bgdModel = np.zeros((1, 65), np.float64)
-    fgdModel = np.zeros((1, 65), np.float64)
-    cv2.grabCut(crop, mask, None, bgdModel, fgdModel, 6, cv2.GC_INIT_WITH_MASK)
+    x = (size - source.width) // 2
+    y = (size - source.height) // 2
+    canvas.paste(source, (x, y), source)
+    return canvas
 
-    raw_fg = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype('uint8')
 
-    # Remove shadow patch below dark blue curve using color threshold
-    sub_shadow = crop[615:645, 200:320]
-    shadow_pixels = (sub_shadow[:,:,2] > 22) | (sub_shadow[:,:,1] > 75)
-    raw_fg[615:645, 200:320][shadow_pixels] = 0
-    raw_fg[630:, 200:320] = 0
+def save_png(size: int, path: str, safe_zone: bool = False) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    render_icon(size, safe_zone=safe_zone).save(path, "PNG")
 
-    # Filter connected components to remove border glass reflections
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(raw_fg)
-    clean_mask = np.zeros((h, w), dtype=np.uint8)
-    for i in range(1, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        bx, by, bw, bh = stats[i, 0], stats[i, 1], stats[i, 2], stats[i, 3]
-        if bx == 0 or by == 0 or (bx + bw) >= w or (by + bh) >= h:
-            continue
-        if area < 100:
-            continue
-        clean_mask[labels == i] = 255
 
-    # Crop to symbol bounding box
-    pts = cv2.findNonZero(clean_mask)
-    sx, sy, sw, sh = cv2.boundingRect(pts)
-    pad = 4
-    sx0, sy0 = max(0, sx - pad), max(0, sy - pad)
-    sx1, sy1 = min(w, sx + sw + pad), min(h, sy + sh + pad)
+def generate() -> None:
+    if not os.path.isfile(SOURCE):
+        raise FileNotFoundError(f"Cannot find {SOURCE}")
 
-    cropped_rgb = cv2.cvtColor(crop[sy0:sy1, sx0:sx1], cv2.COLOR_BGR2RGB)
-    cropped_mask = clean_mask[sy0:sy1, sx0:sx1]
+    standard = render_icon(ICON_SIZE)
+    maskable = render_icon(ICON_SIZE, safe_zone=True)
 
-    # Soft Gaussian blur on alpha for anti-aliasing
-    alpha = cv2.GaussianBlur(cropped_mask.astype(float), (5, 5), 0.8) / 255.0
-    rgba = np.zeros((cropped_rgb.shape[0], cropped_rgb.shape[1], 4), dtype=np.uint8)
-    rgba[:, :, :3] = cropped_rgb
-    rgba[:, :, 3] = np.clip(alpha * 255, 0, 255).astype(np.uint8)
+    # PWA and Flutter web icons
+    for base in ("public/icons", "web/icons"):
+        for size in (192, 512):
+            standard.resize((size, size), Image.Resampling.LANCZOS).save(
+                os.path.join(base, f"icon-{size}.png"), "PNG"
+            )
+        maskable.resize((512, 512), Image.Resampling.LANCZOS).save(
+            os.path.join(base, "icon-512-maskable.png"), "PNG"
+        )
+        if base == "web/icons":
+            maskable.resize((192, 192), Image.Resampling.LANCZOS).save(
+                os.path.join(base, "Icon-maskable-192.png"), "PNG"
+            )
+        standard.resize((180, 180), Image.Resampling.LANCZOS).save(
+            os.path.join(base, "apple-touch-icon.png"), "PNG"
+        )
+        standard.save(
+            os.path.join(base, "favicon.ico"),
+            format="ICO",
+            sizes=[(16, 16), (32, 32), (48, 48), (64, 64)],
+        )
 
-    sym_pil = Image.fromarray(rgba, 'RGBA')
+    # Flutter also references capitalized web icon filenames.
+    for size in (192, 512):
+        standard.resize((size, size), Image.Resampling.LANCZOS).save(
+            os.path.join("web/icons", f"Icon-{size}.png"), "PNG"
+        )
+    maskable.resize((512, 512), Image.Resampling.LANCZOS).save(
+        "web/icons/Icon-maskable-512.png", "PNG"
+    )
+    standard.resize((32, 32), Image.Resampling.LANCZOS).save("web/favicon.png", "PNG")
 
-    # --- 1. Master 1024x1024 Standard Icon with Full-Bleed Gradient ---
-    # Centered inside middle 70% (size <= 716 px)
-    target_w = 670
-    scale = target_w / sym_pil.width
-    target_h = int(round(sym_pil.height * scale))
-    sym_standard = sym_pil.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    # Windows desktop, shortcuts, and installer
+    standard.save(
+        "app_icon.ico",
+        format="ICO",
+        sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+    )
+    os.makedirs("windows/runner/resources", exist_ok=True)
+    standard.save(
+        "windows/runner/resources/app_icon.ico",
+        format="ICO",
+        sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+    )
 
-    top_color = np.array([255, 255, 255], dtype=float)
-    bottom_color = np.array([205, 231, 254], dtype=float) # #CDE7FE
-    gradient_arr = np.zeros((1024, 1024, 3), dtype=np.uint8)
-    for row in range(1024):
-        ratio = row / 1023.0
-        ease_ratio = ratio ** 1.1
-        c = top_color * (1.0 - ease_ratio) + bottom_color * ease_ratio
-        gradient_arr[row, :] = np.clip(c, 0, 255).astype(np.uint8)
+    # Android legacy launcher images
+    android_sizes = {
+        "mipmap-mdpi": 48,
+        "mipmap-hdpi": 72,
+        "mipmap-xhdpi": 96,
+        "mipmap-xxhdpi": 144,
+        "mipmap-xxxhdpi": 192,
+    }
+    for folder, size in android_sizes.items():
+        save_png(size, os.path.join("android/app/src/main/res", folder, "ic_launcher.png"))
 
-    master_standard = Image.fromarray(gradient_arr, 'RGB')
-    pos_x = (1024 - target_w) // 2
-    pos_y = (1024 - target_h) // 2
-    master_standard.paste(sym_standard, (pos_x, pos_y), sym_standard)
+    # macOS and iOS asset catalogs
+    macos_sizes = {
+        "app_icon_16.png": 16,
+        "app_icon_32.png": 32,
+        "app_icon_64.png": 64,
+        "app_icon_128.png": 128,
+        "app_icon_256.png": 256,
+        "app_icon_512.png": 512,
+        "app_icon_1024.png": 1024,
+    }
+    for name, size in macos_sizes.items():
+        save_png(size, os.path.join("macos/Runner/Assets.xcassets/AppIcon.appiconset", name))
 
-    # --- 2. Master 1024x1024 Maskable Icon with Solid Background & Safe Zone ---
-    # Android maskable safe zone is 80% circle (radius 409.6 px in 1024).
-    # Scaled to width 630 px (height ~ 509 px), maximum corner radius is ~ 405 px <= 409.6 px.
-    maskable_w = 630
-    m_scale = maskable_w / sym_pil.width
-    maskable_h = int(round(sym_pil.height * m_scale))
-    sym_maskable = sym_pil.resize((maskable_w, maskable_h), Image.Resampling.LANCZOS)
+    ios_sizes = {
+        "Icon-App-20x20@1x.png": 20,
+        "Icon-App-20x20@2x.png": 40,
+        "Icon-App-20x20@3x.png": 60,
+        "Icon-App-29x29@1x.png": 29,
+        "Icon-App-29x29@2x.png": 58,
+        "Icon-App-29x29@3x.png": 87,
+        "Icon-App-40x40@1x.png": 40,
+        "Icon-App-40x40@2x.png": 80,
+        "Icon-App-40x40@3x.png": 120,
+        "Icon-App-60x60@2x.png": 120,
+        "Icon-App-60x60@3x.png": 180,
+        "Icon-App-76x76@1x.png": 76,
+        "Icon-App-76x76@2x.png": 152,
+        "Icon-App-83.5x83.5@2x.png": 167,
+        "Icon-App-1024x1024@1x.png": 1024,
+    }
+    for name, size in ios_sizes.items():
+        save_png(size, os.path.join("ios/Runner/Assets.xcassets/AppIcon.appiconset", name))
 
-    # Solid light blue background matching the gradient bottom
-    solid_bg = Image.new('RGB', (1024, 1024), (205, 231, 254))
-    m_pos_x = (1024 - maskable_w) // 2
-    m_pos_y = (1024 - maskable_h) // 2
-    solid_bg.paste(sym_maskable, (m_pos_x, m_pos_y), sym_maskable)
+    print("All platform icons generated from the full logo.")
 
-    # Output directories
-    public_icons_dir = os.path.join('public', 'icons')
-    web_icons_dir = os.path.join('web', 'icons')
-    os.makedirs(public_icons_dir, exist_ok=True)
-    os.makedirs(web_icons_dir, exist_ok=True)
 
-    # Export sizes
-    # icon-512.png (512x512)
-    icon_512 = master_standard.resize((512, 512), Image.Resampling.LANCZOS)
-    icon_512.save(os.path.join(public_icons_dir, 'icon-512.png'), 'PNG')
-    icon_512.save(os.path.join(web_icons_dir, 'icon-512.png'), 'PNG')
-    icon_512.save(os.path.join(web_icons_dir, 'Icon-512.png'), 'PNG')
-
-    # icon-192.png (192x192)
-    icon_192 = master_standard.resize((192, 192), Image.Resampling.LANCZOS)
-    icon_192.save(os.path.join(public_icons_dir, 'icon-192.png'), 'PNG')
-    icon_192.save(os.path.join(web_icons_dir, 'icon-192.png'), 'PNG')
-    icon_192.save(os.path.join(web_icons_dir, 'Icon-192.png'), 'PNG')
-
-    # icon-512-maskable.png (512x512)
-    icon_512_maskable = solid_bg.resize((512, 512), Image.Resampling.LANCZOS)
-    icon_512_maskable.save(os.path.join(public_icons_dir, 'icon-512-maskable.png'), 'PNG')
-    icon_512_maskable.save(os.path.join(web_icons_dir, 'icon-512-maskable.png'), 'PNG')
-    icon_512_maskable.save(os.path.join(web_icons_dir, 'Icon-maskable-512.png'), 'PNG')
-
-    # icon-maskable-192.png (for Flutter web consistency)
-    icon_192_maskable = solid_bg.resize((192, 192), Image.Resampling.LANCZOS)
-    icon_192_maskable.save(os.path.join(web_icons_dir, 'Icon-maskable-192.png'), 'PNG')
-
-    # apple-touch-icon.png (180x180)
-    apple_touch_icon = master_standard.resize((180, 180), Image.Resampling.LANCZOS)
-    apple_touch_icon.save(os.path.join(public_icons_dir, 'apple-touch-icon.png'), 'PNG')
-    apple_touch_icon.save(os.path.join(web_icons_dir, 'apple-touch-icon.png'), 'PNG')
-
-    # favicon.ico (multi-resolution ICO: 16, 32, 48, 64)
-    ico_sizes = [(16, 16), (32, 32), (48, 48), (64, 64)]
-    master_standard.save(os.path.join(public_icons_dir, 'favicon.ico'), format='ICO', sizes=ico_sizes)
-    master_standard.save(os.path.join(web_icons_dir, 'favicon.ico'), format='ICO', sizes=ico_sizes)
-
-    # favicon.png in web/
-    favicon_png = master_standard.resize((32, 32), Image.Resampling.LANCZOS)
-    favicon_png.save(os.path.join('web', 'favicon.png'), 'PNG')
-
-    print("All icon assets generated successfully!")
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     generate()

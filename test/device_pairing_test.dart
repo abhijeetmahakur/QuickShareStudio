@@ -51,6 +51,19 @@ void main() {
       expect(find.text('Connected Devices'), findsOneWidget);
     });
 
+    testWidgets('Pairing screen fits phone, tablet, and desktop widths', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      for (final width in [320.0, 360.0, 390.0, 600.0, 768.0, 1280.0]) {
+        tester.view.physicalSize = Size(width, 900);
+        await tester.pumpWidget(createPairingScreen(engine));
+        await tester.pumpAndSettle();
+        expect(find.text('Device Pairing'), findsOneWidget, reason: 'width: $width');
+        expect(tester.takeException(), isNull, reason: 'width: $width');
+      }
+    });
+
     testWidgets('2. Switches between "Show my QR code" and "Show my six-digit code" tabs', (tester) async {
       tester.view.physicalSize = const Size(1280, 1000);
       tester.view.devicePixelRatio = 1.0;

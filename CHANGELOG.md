@@ -2,6 +2,16 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.1] - 2026-10-05
+
+### Changed
+- Use the complete QuickShare Studio logo for Android, iOS, macOS, Windows, and PWA icons.
+- Refresh the PWA icon cache when the updated service worker is installed.
+- Improve the pairing and dashboard layouts for narrow phones, tablets, and wide screens.
+
+### Fixed
+- Request camera permission before scanning, restart the scanner when returning to the app, and show clear retry/settings guidance when camera access is blocked.
+
 ## [2.0.0] - 2026-10-05
 
 > **Updating from 1.x: install this version once by hand.** Versions before 2.0 have no

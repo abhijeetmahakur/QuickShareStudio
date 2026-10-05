@@ -368,5 +368,19 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets('Dashboard fits phone, tablet, and desktop widths', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      for (final width in [320.0, 360.0, 390.0, 600.0, 768.0, 1280.0]) {
+        final size = Size(width, 900);
+        tester.view.physicalSize = size;
+        await tester.pumpWidget(buildTestWidget(size: size, child: const DashboardScreen()));
+        await tester.pumpAndSettle();
+        expect(find.text('Own Your Transfers, Shape Your Workflow'), findsOneWidget, reason: 'width: $width');
+        expect(tester.takeException(), isNull, reason: 'width: $width');
+      }
+    });
   });
 }

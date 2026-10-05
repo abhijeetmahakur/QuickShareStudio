@@ -271,11 +271,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildMainContentArea(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 28.0, vertical: 24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return LayoutBuilder(
+      builder: (context, viewport) {
+        final horizontalPadding = viewport.maxWidth < 380
+            ? 16.0
+            : viewport.maxWidth < 720
+                ? 20.0
+                : 28.0;
+        return SingleChildScrollView(
+          padding: EdgeInsets.symmetric(
+            horizontal: horizontalPadding,
+            vertical: viewport.maxWidth < 600 ? 16.0 : 24.0,
+          ),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1440),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
           // Header Panel with Workstation Details & 4 Statistic Cards
           const DashboardHeader(),
           const SizedBox(height: 28.0),
@@ -336,8 +349,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
           // Recent File Exchanges Section
           const RecentExchangesSection(),
-        ],
-      ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

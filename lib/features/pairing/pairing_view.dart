@@ -295,15 +295,27 @@ class _PairingViewState extends State<PairingView> {
     final engine = context.watch<TransferEngine>();
     final session = engine.currentPairingSession;
     final isSessionActive = session != null && session.isActive;
+    final viewportWidth = MediaQuery.sizeOf(context).width;
+    final horizontalPadding = viewportWidth < 380
+        ? 16.0
+        : viewportWidth < 720
+            ? 20.0
+            : 28.0;
 
     return Scaffold(
       backgroundColor: _bgNearBlack,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+          padding: EdgeInsets.symmetric(
+            horizontal: horizontalPadding,
+            vertical: viewportWidth < 600 ? 16 : 24,
+          ),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1440),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
               // Screen Header
               _buildHeader(engine, isSessionActive),
               const SizedBox(height: 24),
@@ -339,7 +351,9 @@ class _PairingViewState extends State<PairingView> {
               _buildConnectedDevicesSection(engine),
               const SizedBox(height: 24),
               _buildActiveTransfers(engine),
-            ],
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -347,8 +361,9 @@ class _PairingViewState extends State<PairingView> {
   }
 
   Widget _buildHeader(TransferEngine engine, bool isSessionActive) {
+    final compact = MediaQuery.sizeOf(context).width < 380;
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(compact ? 14 : 20),
       decoration: BoxDecoration(
         color: _panelCharcoal,
         borderRadius: BorderRadius.circular(16),
@@ -358,8 +373,8 @@ class _PairingViewState extends State<PairingView> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            width: 48,
-            height: 48,
+            width: compact ? 40 : 48,
+            height: compact ? 40 : 48,
             decoration: BoxDecoration(
               color: _cardSurface,
               borderRadius: BorderRadius.circular(12),
@@ -367,7 +382,7 @@ class _PairingViewState extends State<PairingView> {
             ),
             child: Icon(Icons.phonelink_ring_rounded, color: _limeAccent, size: 26),
           ),
-          const SizedBox(width: 16),
+          SizedBox(width: compact ? 12 : 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -381,7 +396,7 @@ class _PairingViewState extends State<PairingView> {
                       'Device Pairing',
                       style: TextStyle(
                         fontFamily: 'Poppins',
-                        fontSize: 20,
+                        fontSize: compact ? 18 : 20,
                         fontWeight: FontWeight.w700,
                         color: _primaryText,
                       ),
@@ -992,8 +1007,10 @@ class _PairingViewState extends State<PairingView> {
               ),
               child: Column(
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 10,
+                    runSpacing: 8,
                     children: [
                       if (cameraScanSupported) ElevatedButton.icon(
                         onPressed: _scanWithCamera,
@@ -1007,7 +1024,6 @@ class _PairingViewState extends State<PairingView> {
                         icon: const Icon(Icons.camera_alt_rounded, size: 16),
                         label: const Text('Scan with Camera', style: TextStyle(fontFamily: 'Poppins', fontSize: 12)),
                       ),
-                      const SizedBox(width: 10),
                       OutlinedButton.icon(
                         onPressed: () async {
                           // Paste from clipboard

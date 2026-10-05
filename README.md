@@ -56,6 +56,8 @@ Pre-built packages are published on the **[Releases page](https://github.com/abh
 > [!NOTE]
 > **PWA App Icon Refresh:** Web browsers aggressively cache PWA installation manifests and icons. If you have an already-installed copy of QuickShare Studio on your device, it must be uninstalled and reinstalled to refresh the cached home screen icon, app switcher icon, and splash screen with the new logo.
 
+> **Existing installs:** Release **v2.0.1** includes the new logo, camera scanner fixes, and responsive layout improvements. The v2.0 in-app updater can offer the update to existing Android, Windows, and Linux installs. Versions before 2.0 need one manual update first. iOS users need a newly built app installed. PWA users may need to reinstall the app if the browser keeps showing the old icon.
+
 ### 🪟 Windows
 
 1. Install **Python 3.10 or newer** from [python.org](https://www.python.org/downloads/). On the first installer screen, tick **"Add python.exe to PATH"**.

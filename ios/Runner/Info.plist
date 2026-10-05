@@ -68,6 +68,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>QuickShare Studio connects to your other devices on the same Wi-Fi to pair and send files.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>QuickShare Studio uses the camera to scan a device connection QR code.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
