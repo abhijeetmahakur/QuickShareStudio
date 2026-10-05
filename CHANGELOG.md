@@ -2,6 +2,17 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.3] - 2026-10-05
+
+### Added
+- **Cross-network WebRTC candidate logging:** ICE candidates (host, srflx, relay) logged in real-time for transparent network diagnostics.
+- **Receiver-side verification:** Immediate SHA-256 verification and logging upon receiving all chunks (`all chunks received, file verified, saved path`).
+- **In-app update check:** Automatically detects releases published to GitHub and displays update prompts.
+
+### Changed
+- **Windows app icon:** Replaced window title bar, taskbar, and executable icon with multi-size ICO (16-256px) derived from the official QuickShare logo.
+- **Scan QR Code:** Simplified scanner view, keeping camera scan as the primary flow.
+
 ## [2.0.1] - 2026-10-05
 
 ### Changed

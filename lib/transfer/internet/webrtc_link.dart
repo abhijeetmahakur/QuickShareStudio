@@ -178,6 +178,10 @@ class _CandidateBuffer {
   bool _ready = false;
 
   Future<void> add(RTCIceCandidate c) async {
+    final cand = c.candidate ?? '';
+    final typeMatch = RegExp(r'typ (\w+)').firstMatch(cand);
+    final candType = typeMatch?.group(1) ?? 'unknown';
+    debugPrint('[QuickShare] Received remote ICE candidate: type=$candType');
     if (!_ready) {
       _pending.add(c);
       return;

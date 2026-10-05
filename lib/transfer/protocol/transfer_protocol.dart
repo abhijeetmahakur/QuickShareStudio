@@ -587,7 +587,9 @@ class _IncomingRun {
         _sink = null;
         final complete = _fileBytes == offer.files[_file].size;
         if (complete && constantTimeEquals(actual, expected)) {
-          _results.add(await sink.commit(actual));
+          final committed = await sink.commit(actual);
+          _results.add(committed);
+          debugPrint('[QuickShare] all chunks received, file verified, saved path: ${committed.path ?? committed.name}');
           await session._send(FrameType.fileResult, {'tag': tag, 'file': index, 'ok': true});
           await _ack();
           if (index == offer.files.length - 1) {
@@ -596,6 +598,7 @@ class _IncomingRun {
           }
           emit();
         } else {
+          debugPrint('[QuickShare] Checksum mismatch or incomplete: received $_fileBytes / ${offer.files[_file].size} bytes, expected: $expected, actual: $actual');
           await sink.discard();
           await session._send(FrameType.fileResult, {'tag': tag, 'file': index, 'ok': false, 'error': 'corrupted'});
           await finish(TransferPhase.failed, 'File corrupted, retry.');

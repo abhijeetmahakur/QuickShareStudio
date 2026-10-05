@@ -78,6 +78,10 @@ class AppConfig {
   /// Optional static TURN servers used when a direct path is impossible.
   final List<IceServer> turnServers;
 
+  /// Metered TURN credentials (if dynamically fetched or configured)
+  final String? meteredDomain;
+  final String? meteredApiKey;
+
   /// Only use relayed (TURN) candidates. For testing the TURN fallback.
   final bool forceRelay;
 
@@ -140,10 +144,14 @@ class AppConfig {
     String? peerServerHost,
     int? peerServerPort,
     bool? peerServerSecure,
+    String? meteredDomain,
+    String? meteredApiKey,
   }) {
     return AppConfig(
       stunServers: stunServers ?? this.stunServers,
       turnServers: turnServers ?? this.turnServers,
+      meteredDomain: meteredDomain ?? this.meteredDomain,
+      meteredApiKey: meteredApiKey ?? this.meteredApiKey,
       forceRelay: forceRelay ?? this.forceRelay,
       peerServerHost: peerServerHost ?? this.peerServerHost,
       peerServerPort: peerServerPort ?? this.peerServerPort,
@@ -172,6 +180,8 @@ class AppConfig {
     const peerHost = String.fromEnvironment('PEER_SERVER_HOST', defaultValue: '0.peerjs.com');
     const peerPort = int.fromEnvironment('PEER_SERVER_PORT', defaultValue: 443);
     const peerSecure = bool.fromEnvironment('PEER_SERVER_SECURE', defaultValue: true);
+    const meteredDomain = String.fromEnvironment('METERED_DOMAIN');
+    const meteredKey = String.fromEnvironment('METERED_API_KEY');
 
     List<String> split(String v) => v.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
 

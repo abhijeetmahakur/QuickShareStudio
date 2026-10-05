@@ -1,6 +1,6 @@
 ; QuickShare Studio Inno Setup Script
 #ifndef MyAppVersion
-#define MyAppVersion "2.0.1"
+#define MyAppVersion "2.0.3"
 #endif
 
 #define MyAppName "QuickShare Studio"

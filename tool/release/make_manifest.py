@@ -46,6 +46,7 @@ def changelog_section(version, path="CHANGELOG.md"):
 def main():
     version = sys.argv[1].lstrip("v")
     dist = sys.argv[2] if len(sys.argv) > 2 else "dist"
+    os.makedirs(dist, exist_ok=True)
     with open("MIN_SUPPORTED_VERSION", encoding="utf-8") as f:
         minimum = f.read().strip()
     notes_md = changelog_section(version)
