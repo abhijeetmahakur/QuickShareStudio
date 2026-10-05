@@ -437,7 +437,7 @@ class _PairingViewState extends State<PairingView> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Connect another device with a QR code or a six-digit code: on the same Wi-Fi, over the internet, or nearby over Bluetooth. Codes work once and expire after 5 minutes.',
+                  'Connect multiple devices with a QR code or six-digit room code. Rooms stay open for 5 minutes, then close automatically.',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 12.5,
@@ -1206,7 +1206,7 @@ class _PairingViewState extends State<PairingView> {
                 SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Temporary credentials: a code works once and expires after 5 minutes (or after 5 failed attempts). '
+                    'Temporary room code: multiple devices can join for 5 minutes. The room closes automatically when it expires. '
                     'Connections are end-to-end encrypted, and files are only received after you tap Accept.',
                     style: TextStyle(
                       fontFamily: 'Poppins',

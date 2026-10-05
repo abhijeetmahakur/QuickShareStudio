@@ -3,6 +3,11 @@ name: Release
 # Builds downloadable packages and attaches them to a GitHub Release.
 # Trigger: push a version tag, e.g. git tag v1.0.1 && git push origin v1.0.1
 # (or run it manually from the Actions tab).
+#
+# Optional repository secrets (Settings -> Secrets and variables -> Actions):
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+#       Signs every APK with the same key. Without it each build gets a throwaway debug key,
+#       and Android refuses to install one release over another (in-app updates fail).
 on:
   push:
     tags: ["v*"]

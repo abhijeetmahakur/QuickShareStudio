@@ -4,6 +4,14 @@
 *.pyc
 *.swp
 .DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.bak
+*.cache
+node_modules/
+/.cache/
+.cache/
 .atom/
 .build/
 .buildlog/

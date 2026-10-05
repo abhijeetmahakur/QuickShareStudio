@@ -4,8 +4,8 @@
 ///
 ///     flutter run --dart-define-from-file=.env
 ///
-/// See `.env.example` for every key. Nothing secret is hard-coded here; TURN credentials
-/// only exist in the developer's `.env` and in the CI secrets used for release builds.
+/// See `.env.example` for optional build-time network configuration. The default setup
+/// uses public STUN servers and requires no API keys.
 library;
 
 class IceServer {
@@ -59,7 +59,6 @@ class AppConfig {
     this.peerServerHost = '0.peerjs.com',
     this.peerServerPort = 443,
     this.peerServerPath = '/',
-    this.peerServerKey = 'peerjs',
     this.peerServerSecure = true,
     this.chunkSize = 16 * 1024,
     this.codeTtl = const Duration(minutes: 5),
@@ -76,13 +75,8 @@ class AppConfig {
   /// STUN servers, tried first (free, no credentials).
   final List<IceServer> stunServers;
 
-  /// Static TURN servers (e.g. Metered free tier) used when a direct path is impossible.
+  /// Optional static TURN servers used when a direct path is impossible.
   final List<IceServer> turnServers;
-
-  /// Alternative to [turnServers]: fetch short-lived Metered TURN credentials at runtime from
-  /// `https://<meteredDomain>/api/v1/turn/credentials?apiKey=<meteredApiKey>`.
-  final String? meteredDomain;
-  final String? meteredApiKey;
 
   /// Only use relayed (TURN) candidates. For testing the TURN fallback.
   final bool forceRelay;
@@ -91,7 +85,6 @@ class AppConfig {
   final String peerServerHost;
   final int peerServerPort;
   final String peerServerPath;
-  final String peerServerKey;
   final bool peerServerSecure;
 
   /// Size of one data chunk on the wire.
@@ -120,7 +113,7 @@ class AppConfig {
   final int maxTransferBytes;
   final int maxFilesPerTransfer;
 
-  bool get hasTurn => turnServers.isNotEmpty || (meteredDomain != null && meteredApiKey != null);
+  bool get hasTurn => turnServers.isNotEmpty;
 
   /// ICE servers in priority order: STUN first, TURN as the fallback.
   List<IceServer> iceServers({List<IceServer> fetchedTurn = const []}) =>
@@ -151,13 +144,10 @@ class AppConfig {
     return AppConfig(
       stunServers: stunServers ?? this.stunServers,
       turnServers: turnServers ?? this.turnServers,
-      meteredDomain: meteredDomain,
-      meteredApiKey: meteredApiKey,
       forceRelay: forceRelay ?? this.forceRelay,
       peerServerHost: peerServerHost ?? this.peerServerHost,
       peerServerPort: peerServerPort ?? this.peerServerPort,
       peerServerPath: peerServerPath,
-      peerServerKey: peerServerKey,
       peerServerSecure: peerServerSecure ?? this.peerServerSecure,
       chunkSize: chunkSize ?? this.chunkSize,
       codeTtl: codeTtl ?? this.codeTtl,
@@ -174,12 +164,10 @@ class AppConfig {
 
   /// Reads the `--dart-define-from-file=.env` values.
   factory AppConfig.fromEnvironment() {
-    const stun = String.fromEnvironment('STUN_URLS', defaultValue: 'stun:stun.l.google.com:19302');
+    const stun = String.fromEnvironment('STUN_URLS', defaultValue: 'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302');
     const turnUrls = String.fromEnvironment('TURN_URLS');
     const turnUser = String.fromEnvironment('TURN_USERNAME');
     const turnCredential = String.fromEnvironment('TURN_CREDENTIAL');
-    const meteredDomain = String.fromEnvironment('METERED_DOMAIN');
-    const meteredKey = String.fromEnvironment('METERED_API_KEY');
     const forceRelay = bool.fromEnvironment('FORCE_TURN');
     const peerHost = String.fromEnvironment('PEER_SERVER_HOST', defaultValue: '0.peerjs.com');
     const peerPort = int.fromEnvironment('PEER_SERVER_PORT', defaultValue: 443);

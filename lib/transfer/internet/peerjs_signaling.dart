@@ -46,7 +46,6 @@ class PeerJsSignaling {
   static String randomSenderId() => 'qs-s-${_randomId(12)}';
 
   Uri get uri => config.peerServerSocketUri.replace(queryParameters: {
-        'key': config.peerServerKey,
         'id': peerId,
         'token': token,
         'version': clientVersion,

@@ -25,16 +25,38 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="QuickShare Studio">
-  <link rel="manifest" href="/manifest.json">
-  <link rel="icon" href="/icons/icon-192.png">
-  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-  <link rel="icon" type="image/x-icon" href="/icons/favicon.ico">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/x-icon" href="icons/favicon.ico">
 
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/sw.js').then(function(reg) {
+        navigator.serviceWorker.register(new URL('sw.js', document.baseURI)).then(function(reg) {
           console.log('QuickShare Studio ServiceWorker registered:', reg.scope);
+          function showUpdate() {
+            if (!reg.waiting || document.getElementById('quickshare-update')) return;
+            var bar = document.createElement('button');
+            bar.id = 'quickshare-update';
+            bar.textContent = 'Update available, reload';
+            bar.style.cssText = 'position:fixed;z-index:99999;bottom:20px;left:50%;transform:translateX(-50%);padding:14px 22px;border:0;border-radius:12px;background:#d0ff38;color:#111;font:600 15px system-ui;box-shadow:0 4px 20px #0005;cursor:pointer';
+            bar.onclick = function() {
+              reg.waiting.postMessage({type:'SKIP_WAITING'});
+              bar.disabled = true;
+              bar.textContent = 'Reloading…';
+            };
+            document.body.appendChild(bar);
+          }
+          showUpdate();
+          reg.addEventListener('updatefound', function() {
+            var worker = reg.installing;
+            if (worker) worker.addEventListener('statechange', function() {
+              if (worker.state === 'installed' && navigator.serviceWorker.controller) showUpdate();
+            });
+          });
+          setInterval(function() { reg.update(); }, 60 * 60 * 1000);
+          navigator.serviceWorker.addEventListener('controllerchange', function() { window.location.reload(); });
         }).catch(function(err) {
           console.warn('QuickShare Studio ServiceWorker registration error:', err);
         });
@@ -74,17 +96,16 @@
       if (e.clipboardData && e.clipboardData.items) {
         for (var i = 0; i < e.clipboardData.items.length; i++) {
           var item = e.clipboardData.items[i];
-          if (item.kind === 'file' && item.type.indexOf('image') !== -1) {
+          if (item.kind === 'file' && (item.type.indexOf('image') !== -1 || item.type === 'application/pdf')) {
             var file = item.getAsFile();
             if (file) files.push(file);
           }
         }
       }
-      e.preventDefault();
       if (files.length === 0) {
-        handler(null);
         return;
       }
+      e.preventDefault();
       files.forEach(function(file) {
         var reader = new FileReader();
         reader.onload = function(evt) { handler(evt.target.result); };

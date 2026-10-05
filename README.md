@@ -30,6 +30,7 @@
 
 | Area | What you get |
 |---|---|
+<<<<<<< HEAD
 | **PDF Studio** | Three-panel live workspace (pages · real-time preview · layout presets) supporting 1, 2, 3, 4, 6, 8, and 10 images per page or custom grid layouts; A3, A4, A5, and Letter paper sizes; printer-safe margins; custom borders, captions, headers/footers, and page numbers. Work is preserved across navigation tabs. |
 | **PDF Tools** | Lossless merge and split (pages are copied directly so text stays selectable and file sizes stay minimal); compression (72 / 100 / 150 DPI JPEG profiles); OCR for screenshots and scanned documents (English and Hindi) with text extraction and searchable PDF output; multi-format batch file converter. |
 | **Save, Print & Share** | Exports directly to `Downloads/QuickShare`; *Print / Preview* triggers the native OS print engine; *Share* opens the system share sheet. |
@@ -39,6 +40,17 @@
 | **Screenshot Sessions** | Group screenshots by experiment, lecture, or project with automatic duplicate detection and drag-and-drop reordering. |
 | **Native Windows Shell** | Fully embedded custom application icon in `.exe`, desktop shortcuts, Start Menu, taskbar, and top-left title bar (`WM_SETICON`). |
 | **In-App Auto-Updates** | Checks GitHub Releases on launch and every 4 hours while running. Displays an update prompt with release notes, downloads the new installer/package with progress indicator, and applies the update smoothly. |
+=======
+| **PDF Studio** | Three-panel editor (pages · live preview · layout controls) with 1, 2, 3, 4, 6, 8 and 10 images per page or a custom grid; A3/A4/A5/Letter paper; printer-safe margins; borders, captions, headers/footers and page numbers; optional searchable text layer from captions. Work is kept while you switch sections. |
+| **PDF Tools** | Lossless merge and split (pages are copied, not re-rendered, so text stays selectable and files stay small); compression (72 / 100 / 150 DPI JPEG profiles); OCR for screenshots and scanned PDFs (English, Hindi) with text export and searchable-PDF output; file converter with whole-folder support. |
+| **Save, print & share** | Exports save straight to `Downloads/QuickShare`; *Print / Preview* opens the file in your system PDF viewer; *Share* opens the OS share sheet. |
+| **Connect devices** | A 6-digit room code (or QR) supports multiple devices over Wi-Fi or the internet using PeerJS signaling and direct WebRTC data channels; rooms expire after 5 minutes. Bluetooth remains available nearby. Free STUN is used without API keys; restrictive networks may need an optional TURN relay or LAN/Bluetooth fallback. |
+| **File sharing** | Send any number of files of any size. The receiver sees who is sending what and taps **Accept** first. Transfers are end-to-end encrypted, show progress, speed and time left, can be cancelled, resume after a dropped connection, and every file is verified with SHA-256. |
+| **Screenshot sessions** | Group screenshots per lab or experiment (sidebar → *Screenshot Sessions*), with duplicate detection and drag-and-drop reordering. |
+| **Universal clipboard** | Text, links, code and images, previewed before anything is sent. |
+| **Privacy & security** | PIN lock, private mode, configurable download folder and one-click cache purge. |
+| **Updates** | PWA builds deploy to GitHub Pages and prompt when a new service worker is ready. Android and the desktop app check GitHub Releases for verified updates. |
+>>>>>>> origin/main
 
 > **100% Offline Capability:** PDF editing, OCR extraction, printing, local Wi-Fi transfers, and Bluetooth sharing require zero internet connection. The internet is only used for remote WebRTC connections and release checks.
 
@@ -149,6 +161,39 @@ On the receiving device, open **Device Pairing** to view a 6-digit code and QR c
 - For Windows native build: Visual Studio 2022 with C++ desktop workload
 - For Android: Android SDK (Platform 34+, NDK 28)
 
+### Permissions (Android)
+
+| Permission | Android version | Why |
+|---|---|---|
+| `BLUETOOTH_SCAN` (*neverForLocation*), `BLUETOOTH_CONNECT`, `BLUETOOTH_ADVERTISE` | 12+ (API 31+) | Find nearby phones and exchange keys over Bluetooth |
+| `BLUETOOTH`, `BLUETOOTH_ADMIN` | 11 and older | Same, install-time on these versions |
+| `ACCESS_FINE_LOCATION` | 12L and older (API ≤ 32) | Required by Android for BLE scans (≤ 11) and Wi-Fi Direct (≤ 12L); not used to read your location |
+| `NEARBY_WIFI_DEVICES` (*neverForLocation*) | 13+ (API 33+) | Wi-Fi Direct, which carries Bluetooth-path transfers |
+| `POST_NOTIFICATIONS` | 13+ | Progress notification for transfers in the background (optional) |
+| `FOREGROUND_SERVICE_DATA_SYNC`, `WAKE_LOCK` | all | Keep a running transfer alive with the screen off |
+| `CAMERA` | all | Scan pairing QR codes |
+| `REQUEST_INSTALL_PACKAGES` | all | Install updates downloaded by the app |
+| `WRITE_EXTERNAL_STORAGE` | 9 and older | Save received files to Download/QuickShare |
+
+### Troubleshooting
+
+| Problem | What to do |
+|---|---|
+| "Couldn't find the device on this Wi-Fi" | Pairing automatically falls back to internet/WebRTC. Ensure both devices have internet access. |
+| "No device is online with that code" | The room expired (5 min) or its host closed the app. Ask the host to regenerate a new 6-digit code. |
+| The verification codes differ | Disconnect and connect again. |
+| A transfer stopped with "Connection lost" | The sender taps **Resume** to continue where it stopped, or **Retry** to start over. |
+
+---
+
+## 🛠 Build from Source
+
+### Prerequisites
+- [Flutter SDK 3.47+](https://docs.flutter.dev/get-started/install) (Dart 3.13+)
+- Git
+- For Windows native build: Visual Studio 2022 with C++ desktop workload
+- For Android: Android SDK (Platform 34+, NDK 28)
+
 ### Building Locally
 
 ```bash
@@ -188,6 +233,18 @@ taskkill /f /im explorer.exe
 Remove-Item "$env:LOCALAPPDATA\IconCache.db" -Force -ErrorAction SilentlyContinue
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\iconcache*" -Force -ErrorAction SilentlyContinue
 start explorer.exe
+```
+
+---
+
+## 🚀 Publishing a Release
+
+Releases are built automatically by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Push a version tag and the Windows and Android packages are attached to a new GitHub Release:
+
+```bash
+git tag v2.0.2
+git push origin v2.0.2
+```
 ```
 
 ---
