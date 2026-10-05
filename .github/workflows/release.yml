@@ -1,8 +1,9 @@
 name: Release
 
-# Push a version tag (for example v2.0.3) to build packages and publish a GitHub Release.
+# Triggers on every push to main or on release tags, builds packages and publishes a GitHub Release.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -15,14 +16,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
       - name: Enable Developer Mode for symlinks
         shell: pwsh
         run: |
           New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -Name "AllowDevelopmentWithoutDevLicense" -PropertyType DWord -Value 1 -Force
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
       - name: Enable Windows desktop
         run: flutter config --enable-windows-desktop
       - name: Install dependencies
@@ -36,10 +37,11 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path "dist" -Force | Out-Null
           Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "dist\QuickShareStudio-Windows-x64.zip" -Force
-          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $ver = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9\.]+)' | ForEach-Object { $_.Matches.Groups[1].Value }).Trim()
+          Write-Host "Packaging version: $ver"
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup compiler was not installed." }
-          & $iscc /DMyAppVersion="$tag" windows\installer\quickshare.iss
+          & $iscc /DMyAppVersion="$ver" windows\installer\quickshare.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
       - uses: actions/upload-artifact@v4
         with:
@@ -119,7 +121,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: [windows-release, linux-release, android-release]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -127,10 +129,19 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Determine version
+        id: ver
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]*([0-9.]+).*/\1/' | tr -d '[:space:]')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "TAG=v$VERSION" >> $GITHUB_ENV
       - name: Generate checksums, update manifest, and release notes
-        run: python3 tool/release/make_manifest.py "${GITHUB_REF_NAME#v}" dist
-      - uses: softprops/action-gh-release@v2
+        run: python3 tool/release/make_manifest.py "${{ env.VERSION }}" dist
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
+          name: QuickShare Studio ${{ env.TAG }}
           body_path: dist/notes.md
           files: |
             dist/*

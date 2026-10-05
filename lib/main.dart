@@ -24,6 +24,8 @@ void main() async {
   // browser-based desktop app goes through the local launcher server (server.py).
   // Start ConnectionManager immediately so internet pairing (PeerJS) is ready at once
   unawaited(ConnectionManager.instance.start());
+  // Check for app updates from GitHub immediately on launch
+  unawaited(AppUpdateService().checkOnLaunch());
 
   final lanReady = kIsWeb
       ? BridgePeerLink.connect().then((link) {

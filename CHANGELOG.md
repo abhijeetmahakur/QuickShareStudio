@@ -2,7 +2,7 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
-## [2.0.6] - 2026-10-05
+## [2.0.7] - 2026-10-05
 
 ### Added
 - **Cross-network WebRTC candidate logging:** ICE candidates (host, srflx, relay) logged in real-time for transparent network diagnostics.
