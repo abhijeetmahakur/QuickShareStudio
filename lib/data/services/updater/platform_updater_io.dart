@@ -13,6 +13,7 @@ bool get canSelfUpdate => Platform.isAndroid || Platform.isWindows;
 const _system = MethodChannel('quickshare/system');
 
 Future<InstallResult> downloadAndInstall(AppUpdateInfo update, void Function(double progress) onProgress) async {
+  final url = update.packageUrl;
   if (Platform.isWindows) {
     if (url.isEmpty) {
       return const InstallResult(false, 'Opening release download page...', openReleasePage: true);
@@ -71,7 +72,6 @@ Future<InstallResult> downloadAndInstall(AppUpdateInfo update, void Function(dou
   if (!Platform.isAndroid) {
     return const InstallResult(false, 'Download the new version from the release page.', openReleasePage: true);
   }
-  final url = update.packageUrl;
   if (url.isEmpty || update.packageSha256.isEmpty) {
     return const InstallResult(false, 'This release has no verified Android package. Download it from the release page.',
         openReleasePage: true);
