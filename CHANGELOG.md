@@ -2,6 +2,14 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.17] - 2026-10-07
+
+### Fixed
+- Android receives now stream verified files into the public Downloads/QuickShare folder using MediaStore.
+- The mobile update dialog now fits small screens, removes raw Markdown from release notes, and shows update failures only once.
+- Dashboard workspace cards now show a clear lime glow while hovered by a mouse.
+- Android's minimum SDK is aligned with the current cryptography plugin requirement (API 24).
+
 ## [2.0.16] - 2026-10-07
 
 ### Fixed

@@ -11,6 +11,14 @@ import '../../core/utils/format_utils.dart';
 import '../../core/constants.dart';
 import '../../core/widgets/hover_card.dart';
 
+String _displayReceivedPath(ReceivedItemModel item) {
+  if (item.savedToPath.startsWith('content://') ||
+      item.savedToPath.startsWith('file://')) {
+    return 'Downloads/QuickShare/${item.fileName}';
+  }
+  return item.savedToPath;
+}
+
 /// QuickShare Studio — Received Items & Background Inbox
 /// Every file received from another device is permanently stored here and can be downloaded later.
 /// Preserves original file name, format, and contents across app sessions.
@@ -504,6 +512,13 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
   // Download or Save to Device Action
   // -------------------------------------------------------------
   Future<void> _downloadOrSaveItem(BuildContext context, ReceivedItemModel item, TransferEngine engine) async {
+    if (item.savedToPath.startsWith('content://') || item.savedToPath.startsWith('file://')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Already saved to ${_displayReceivedPath(item)}.')),
+      );
+      return;
+    }
+
     final bytes = item.bytes.isNotEmpty ? item.bytes : engine.fileDataStore[item.fileName];
     if (bytes == null || bytes.isEmpty) {
       // Large received files go straight to disk and are not kept in memory.
@@ -616,7 +631,7 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
               _buildDetailRow('File Size', FormatUtils.formatBytes(item.fileSizeBytes)),
               _buildDetailRow('Sender Device', item.senderDeviceName),
               _buildDetailRow('Received At', '${item.receivedAt.hour.toString().padLeft(2, '0')}:${item.receivedAt.minute.toString().padLeft(2, '0')} • ${item.receivedAt.day}/${item.receivedAt.month}/${item.receivedAt.year}'),
-              _buildDetailRow('Storage Path', item.savedToPath),
+              _buildDetailRow('Storage Path', _displayReceivedPath(item)),
               if (item.sha256.isNotEmpty)
                 _buildDetailRow('SHA-256', item.sha256.length > 20 ? '${item.sha256.substring(0, 16)}...' : item.sha256),
             ],
@@ -1160,7 +1175,7 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Path: ${item.savedToPath}',
+                  'Path: ${_displayReceivedPath(item)}',
                   style: TextStyle(fontFamily: 'monospace', fontSize: 10.5, color: AppColors.secondaryText),
                   overflow: TextOverflow.ellipsis,
                 ),

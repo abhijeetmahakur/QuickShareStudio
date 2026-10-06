@@ -28,8 +28,8 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.quickshare.quickshare"
-        // mobile_scanner requires minimum SDK 23 (Android 6.0+)
-        minSdk = 23
+        // cryptography_flutter requires API 24 (Android 7.0+).
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)

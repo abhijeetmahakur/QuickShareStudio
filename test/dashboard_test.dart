@@ -118,7 +118,12 @@ void main() {
               as BoxDecoration;
       expect(
         (hoveredCardDecoration.border! as Border).top.color,
-        AppColors.subtleBorderLight,
+        AppColors.primaryAccent.withValues(alpha: 0.48),
+      );
+      expect(hoveredCardDecoration.boxShadow, isNotEmpty);
+      expect(
+        hoveredCardDecoration.boxShadow!.first.color,
+        AppColors.primaryAccent.withValues(alpha: 0.20),
       );
 
       await mouse.moveTo(const Offset(900, 700));
@@ -653,8 +658,9 @@ void main() {
               as BoxDecoration;
       expect(
         (decoration.border! as Border).top.color,
-        AppColors.subtleBorderLight,
+        AppColors.primaryAccent.withValues(alpha: 0.48),
       );
+      expect(decoration.boxShadow, isNotEmpty);
 
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       await tester.pump();

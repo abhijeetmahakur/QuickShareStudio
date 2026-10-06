@@ -1663,7 +1663,7 @@ void main() {
 
     testWidgets('13.B: UpdateDialog displays Liquid Glass popup with Update Now, Update Later, and View Details', (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({});
-      tester.view.physicalSize = const Size(1280, 850);
+      tester.view.physicalSize = const Size(360, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -1677,7 +1677,7 @@ void main() {
         version: '2.2.0',
         currentVersion: AppConstants.appVersion,
         title: 'QuickShare Studio 2.2.0 Release',
-        description: 'New Liquid Glass interface enhancements and file format converters.',
+        description: '### Fixed',
         releaseNotes: [
           'Automatic offline fallback for pairing sessions',
           'Multi-page PDF layout customizer',
@@ -1715,6 +1715,12 @@ void main() {
       expect(find.textContaining('v${AppConstants.appVersion}'), findsWidgets);
       expect(find.textContaining('v2.2.0'), findsWidgets);
       expect(find.text('QuickShare Studio 2.2.0 Release'), findsOneWidget);
+      expect(find.text('### Fixed'), findsNothing);
+      final dialogBody = find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byType(SingleChildScrollView),
+      );
+      expect(tester.getSize(dialogBody).width, lessThan(360));
 
       // Verify buttons: Update Now, Update Later, View Details
       expect(find.text('Update Now'), findsOneWidget);
@@ -1722,11 +1728,13 @@ void main() {
       expect(find.text('View Details'), findsOneWidget);
 
       // Tap View Details to expand release notes
+      await tester.ensureVisible(find.text('View Details'));
       await tester.tap(find.text('View Details'));
       await tester.pumpAndSettle();
       expect(find.text('Automatic offline fallback for pairing sessions'), findsOneWidget);
 
       // Tap Update Later
+      await tester.ensureVisible(find.text('Update Later'));
       await tester.tap(find.text('Update Later'));
       await tester.pumpAndSettle();
 
@@ -1843,4 +1851,3 @@ void main() {
     });
   });
 }
-

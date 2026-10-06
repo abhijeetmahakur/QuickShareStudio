@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import '../../../core/constants.dart';
 
 /// Reusable interactive card for the PRIMARY ACTIONS & WORKSPACE section.
-/// Hover feedback stays neutral so it cannot be mistaken for an active selection.
+/// A soft accent glow distinguishes mouse hover from keyboard focus and touch press.
 class WorkspaceCard extends StatefulWidget {
   final String title;
   final String subtitle;
@@ -125,16 +125,19 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
                 color: isFocused
                     ? AppColors.primaryAccent
                     : (isHovered
-                          ? AppColors.subtleBorderLight
+                          ? AppColors.primaryAccent.withValues(alpha: 0.48)
                           : AppColors.subtleBorder),
                 width: isFocused ? 1.5 : 1.0,
               ),
               boxShadow: [
-                if (isFocused)
+                if (isFocused || isHovered)
                   BoxShadow(
-                    color: AppColors.primaryAccent.withValues(alpha: 0.12),
-                    blurRadius: 12.0,
-                    offset: const Offset(0, 2),
+                    color: AppColors.primaryAccent.withValues(
+                      alpha: isFocused ? 0.12 : 0.20,
+                    ),
+                    blurRadius: isHovered ? 22.0 : 12.0,
+                    spreadRadius: isHovered ? 1.0 : 0.0,
+                    offset: Offset(0, isHovered ? 3 : 2),
                   ),
                 BoxShadow(
                   color: Colors.black.withValues(

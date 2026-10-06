@@ -6,6 +6,20 @@ import '../../data/models/app_update_info.dart';
 import '../../data/services/app_update_service.dart';
 import '../../data/services/transfer_engine.dart';
 
+String _plainReleaseText(String text) => text
+    .replaceAll(RegExp(r'^\s{0,3}#{1,6}\s*', multiLine: true), '')
+    .replaceAll(RegExp(r'^\s*[-*+]\s+', multiLine: true), '')
+    .replaceAll(RegExp(r'[*_`]'), '')
+    .trim();
+
+String _updateDescription(AppUpdateInfo update) {
+  if (RegExp(r'^#{1,6}\s+.+$').hasMatch(update.description.trim())) {
+    return 'Bug fixes and improvements.';
+  }
+  final description = _plainReleaseText(update.description);
+  return description.isEmpty ? 'A new version is ready to install.' : description;
+}
+
 class UpdateDialog extends StatefulWidget {
   final AppUpdateInfo update;
 
@@ -70,10 +84,14 @@ class _UpdateDialogState extends State<UpdateDialog> {
         updateService.status == UpdateStatus.staging;
     final isApplied = updateService.status == UpdateStatus.applied;
     final isFailed = updateService.status == UpdateStatus.failed;
+    final warningMessage = (updateService.errorMessage ?? '').trim();
+    final screenSize = MediaQuery.sizeOf(context);
+    final isCompact = screenSize.width < 600;
     // Versions below the minimum supported one cannot postpone.
     final mandatory = update.isBelowMinimum;
 
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isCompact ? 16 : 40, vertical: 24),
       backgroundColor: AppColors.cardBg,
       elevation: 24,
       shape: RoundedRectangleBorder(
@@ -81,12 +99,13 @@ class _UpdateDialogState extends State<UpdateDialog> {
         side: BorderSide(color: AppColors.white.withValues(alpha: 0.16), width: 1.2),
       ),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 520),
-        padding: const EdgeInsets.all(26),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+        constraints: BoxConstraints(maxWidth: 520, maxHeight: screenSize.height - 48),
+        child: SingleChildScrollView(
+          padding: EdgeInsets.all(isCompact ? 18 : 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             // Header: Update Icon & Title
             Row(
               children: [
@@ -193,7 +212,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
 
             // Short Description
             Text(
-              update.description,
+              _updateDescription(update),
               style: TextStyle(fontSize: 13, color: AppColors.secondaryText, height: 1.4),
             ),
             const SizedBox(height: 12),
@@ -247,7 +266,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                           Text('• ', style: TextStyle(color: AppColors.primaryAccent, fontWeight: FontWeight.bold)),
                           Expanded(
                             child: Text(
-                              update.releaseNotes[idx],
+                              _plainReleaseText(update.releaseNotes[idx]),
                               style: TextStyle(fontSize: 11.5, color: AppColors.secondaryText),
                             ),
                           ),
@@ -322,12 +341,13 @@ class _UpdateDialogState extends State<UpdateDialog> {
                   border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
                 ),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Icon(Icons.error_outline, color: Colors.redAccent, size: 20),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        updateService.errorMessage ?? 'Update could not be completed.',
+                        warningMessage.isNotEmpty ? warningMessage : 'Update could not be completed.',
                         style: const TextStyle(color: Colors.redAccent, fontSize: 12),
                       ),
                     ),
@@ -345,10 +365,10 @@ class _UpdateDialogState extends State<UpdateDialog> {
               ),
               const SizedBox(height: 12),
             ],
-            if (updateService.status == UpdateStatus.readyToRestart || (isFailed && updateService.statusMessage.isNotEmpty)) ...[
+            if (updateService.status == UpdateStatus.readyToRestart) ...[
               Text(
                 updateService.statusMessage,
-                style: TextStyle(fontSize: 12.5, color: isFailed ? AppColors.error : AppColors.success),
+                style: TextStyle(fontSize: 12.5, color: AppColors.success),
               ),
               const SizedBox(height: 12),
             ],
@@ -395,7 +415,8 @@ class _UpdateDialogState extends State<UpdateDialog> {
                   ),
                 ],
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
