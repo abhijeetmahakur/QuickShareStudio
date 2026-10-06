@@ -2,6 +2,11 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.16] - 2026-10-07
+
+### Fixed
+- Windows releases now validate the x64 launcher and plugin DLL, extract and start the ZIP build, and silently install and start the installer build before publishing.
+
 ## [2.0.15] - 2026-10-07
 
 ### Fixed

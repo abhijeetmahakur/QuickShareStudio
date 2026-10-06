@@ -42,6 +42,13 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "Inno Setup compiler was not installed." }
           & $iscc /DMyAppVersion="$ver" windows\installer\quickshare.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+      - name: Smoke-test Windows release packages
+        shell: pwsh
+        run: |
+          & .\tool\release\validate_windows_package.ps1 `
+            -ReleaseDirectory "build\windows\x64\runner\Release" `
+            -ArchivePath "dist\QuickShareStudio-Windows-x64.zip" `
+            -InstallerPath "dist\QuickShareStudio-Windows-Setup.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-packages
