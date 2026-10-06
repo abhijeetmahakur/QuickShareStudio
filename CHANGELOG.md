@@ -2,6 +2,12 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.15] - 2026-10-07
+
+### Fixed
+- Dashboard cards now navigate directly instead of retaining a persistent selected glow; mouse hover and touch feedback are independent per card and reset on exit, navigation, and app deactivation.
+- Dashboard sidebar items now use isolated mouse hover state and keyboard-only focus highlighting.
+
 ## [2.0.14] - 2026-10-07
 
 ### Fixed

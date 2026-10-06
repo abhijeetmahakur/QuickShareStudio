@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../../core/constants.dart';
 import '../../core/services/theme_service.dart';
 import 'widgets/sidebar.dart';
@@ -35,13 +36,10 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen>
+    with WidgetsBindingObserver {
   late int _selectedIndex;
-
-  /// Currently active workspace card index on the Dashboard.
-  /// Initial state represents "nothing selected" when the Dashboard is displayed,
-  /// ensuring Universal Clipboard (or any other card) is not selected by default.
-  int? _activeCardIndex;
+  int _interactionResetToken = 0;
 
   /// Sections opened so far. They stay mounted (hidden) so switching sections does not
   /// throw away work such as PDF Studio pages or PDF Tools selections.
@@ -54,34 +52,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _selectedIndex = widget.initialIndex;
-    _activeCardIndex = null;
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    FocusManager.instance.primaryFocus?.unfocus();
+    _interactionResetToken++;
   }
 
   void _onNavigate(int index) {
     setState(() {
       _selectedIndex = index;
-      if (index == 0) {
-        // Navigating back to the Dashboard clears any active card selection
-        _activeCardIndex = null;
-      }
+      _interactionResetToken++;
     });
   }
 
-  void _onCardTap(int targetIndex) {
-    setState(() {
-      if (_activeCardIndex == targetIndex) {
-        // Tapping the already-active card opens/navigates into that section
-        _onNavigate(targetIndex);
-      } else {
-        // First tap activates this card and immediately deselects any previously active card
-        _activeCardIndex = targetIndex;
-      }
-    });
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _resetInteractions();
+    }
+  }
+
+  void _resetInteractions() {
+    if (!mounted) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _interactionResetToken++);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   // Primary workspace cards for the app's available features
-  static const List<({String title, String subtitle, IconData icon, int? targetIndex})> _workspaceItems = [
+  static const List<
+    ({String title, String subtitle, IconData icon, int? targetIndex})
+  >
+  _workspaceItems = [
     (
       title: 'Create PDF',
       subtitle: 'Multi-page studio & 7 layouts',
@@ -138,100 +153,111 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       themeService = context.watch<ThemeService>();
     } catch (_) {}
-    final isDark = widget.isDarkMode ?? themeService?.isDarkMode ?? (Theme.of(context).brightness == Brightness.dark);
-    final onToggle = widget.onToggleTheme ?? () => (themeService?.toggleTheme() ?? ThemeService().toggleTheme());
+    final isDark =
+        widget.isDarkMode ??
+        themeService?.isDarkMode ??
+        (Theme.of(context).brightness == Brightness.dark);
+    final onToggle =
+        widget.onToggleTheme ??
+        () => (themeService?.toggleTheme() ?? ThemeService().toggleTheme());
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isDesktop = constraints.maxWidth >= 960;
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isDesktop = constraints.maxWidth >= 960;
 
-        if (isDesktop) {
-          // Desktop Composition: Left Sidebar + Scrollable Main Content Area
-          return Scaffold(
-            backgroundColor: AppColors.dashboardBg,
-            body: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Sidebar(
-                  width: 260.0,
-                  selectedIndex: _selectedIndex,
-                  onItemSelected: _onNavigate,
-                  onToggleTheme: onToggle,
-                  isDarkMode: isDark,
-                ),
-                Expanded(
-                  child: _buildActiveWorkspace(context),
-                ),
-              ],
-            ),
-          );
-        } else {
-          // Mobile & Tablet Composition: Drawer Sidebar + Scrollable Body
-          return Scaffold(
-            backgroundColor: AppColors.dashboardBg,
-            drawer: Drawer(
-              backgroundColor: AppColors.charcoalSurface,
-              child: SafeArea(
-                child: Sidebar(
-                  isDrawer: true,
-                  selectedIndex: _selectedIndex,
-                  onItemSelected: (idx) {
-                    Navigator.of(context).maybePop();
-                    _onNavigate(idx);
-                  },
-                  onToggleTheme: onToggle,
-                  isDarkMode: isDark,
-                ),
-              ),
-            ),
-            appBar: AppBar(
-              backgroundColor: AppColors.charcoalSurface,
-              surfaceTintColor: Colors.transparent,
-              elevation: 0,
-              leading: Builder(
-                builder: (ctx) => IconButton(
-                  icon: Icon(Icons.menu_rounded, color: AppColors.primaryText),
-                  tooltip: 'Menu',
-                  onPressed: () => Scaffold.of(ctx).openDrawer(),
-                ),
-              ),
-              title: Row(
+          if (isDesktop) {
+            // Desktop Composition: Left Sidebar + Scrollable Main Content Area
+            return Scaffold(
+              backgroundColor: AppColors.dashboardBg,
+              body: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(
-
-                    width: 28.0,
-                    height: 28.0,
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryAccent,
-                      borderRadius: BorderRadius.circular(8.0),
-                    ),
-                    child: const Icon(
-                      Icons.bolt_rounded,
-                      color: AppColors.nearBlack,
-                      size: 18.0,
-                    ),
+                  Sidebar(
+                    width: 260.0,
+                    selectedIndex: _selectedIndex,
+                    interactionResetToken: _interactionResetToken,
+                    onItemSelected: _onNavigate,
+                    onToggleTheme: onToggle,
+                    isDarkMode: isDark,
                   ),
-                  const SizedBox(width: 10.0),
-                  Expanded(
-                    child: Text(
-                      'QuickShare Studio',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 16.0,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primaryText,
-                      ),
-                    ),
-                  ),
+                  Expanded(child: _buildActiveWorkspace(context)),
                 ],
               ),
-            ),
-            body: _buildActiveWorkspace(context),
-          );
-        }
-      },
+            );
+          } else {
+            // Mobile & Tablet Composition: Drawer Sidebar + Scrollable Body
+            return Scaffold(
+              backgroundColor: AppColors.dashboardBg,
+              drawer: Drawer(
+                backgroundColor: AppColors.charcoalSurface,
+                child: SafeArea(
+                  child: Sidebar(
+                    isDrawer: true,
+                    selectedIndex: _selectedIndex,
+                    interactionResetToken: _interactionResetToken,
+                    onItemSelected: (idx) {
+                      Navigator.of(context).maybePop();
+                      _onNavigate(idx);
+                    },
+                    onToggleTheme: onToggle,
+                    isDarkMode: isDark,
+                  ),
+                ),
+              ),
+              appBar: AppBar(
+                backgroundColor: AppColors.charcoalSurface,
+                surfaceTintColor: Colors.transparent,
+                elevation: 0,
+                leading: Builder(
+                  builder: (ctx) => IconButton(
+                    icon: Icon(
+                      Icons.menu_rounded,
+                      color: AppColors.primaryText,
+                    ),
+                    tooltip: 'Menu',
+                    onPressed: () => Scaffold.of(ctx).openDrawer(),
+                  ),
+                ),
+                title: Row(
+                  children: [
+                    Container(
+                      width: 28.0,
+                      height: 28.0,
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryAccent,
+                        borderRadius: BorderRadius.circular(8.0),
+                      ),
+                      child: const Icon(
+                        Icons.bolt_rounded,
+                        color: AppColors.nearBlack,
+                        size: 18.0,
+                      ),
+                    ),
+                    const SizedBox(width: 10.0),
+                    Expanded(
+                      child: Text(
+                        'QuickShare Studio',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 16.0,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primaryText,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              body: _buildActiveWorkspace(context),
+            );
+          }
+        },
+      ),
     );
   }
 
@@ -246,7 +272,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _visitedSections.contains(i)
               // Hidden sections get TickerMode off, which also pauses PDF Studio's
               // global paste/keyboard/drop handlers.
-              ? TickerMode(enabled: i == _selectedIndex, child: _buildSection(context, i))
+              ? TickerMode(
+                  enabled: i == _selectedIndex,
+                  child: _buildSection(context, i),
+                )
               : const SizedBox.shrink(),
       ],
     );
@@ -257,17 +286,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 1: // PDF Studio
         return const PdfEditorView();
       case 2: // Device Pairing
-        return PairingView(
-          onNavigateToReceived: () => _onNavigate(4),
-        );
+        return PairingView(onNavigateToReceived: () => _onNavigate(4));
       case 3: // Send Files
-        return SendFilesView(
-          onNavigateToPairing: () => _onNavigate(2),
-        );
+        return SendFilesView(onNavigateToPairing: () => _onNavigate(2));
       case 4: // Received Items
-        return ReceivedItemsView(
-          onOpenSettings: () => _onNavigate(8),
-        );
+        return ReceivedItemsView(onOpenSettings: () => _onNavigate(8));
       case 5: // PDF Tools
         return const PdfToolsView();
       case 6: // Universal Clipboard
@@ -290,8 +313,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final horizontalPadding = viewport.maxWidth < 380
             ? 16.0
             : viewport.maxWidth < 720
-                ? 20.0
-                : 28.0;
+            ? 20.0
+            : 28.0;
         return SingleChildScrollView(
           padding: EdgeInsets.symmetric(
             horizontal: horizontalPadding,
@@ -303,70 +326,74 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-          // Header Panel with Workstation Details & 4 Statistic Cards
-          const DashboardHeader(),
-          const SizedBox(height: 28.0),
+                  // Header Panel with Workstation Details & 4 Statistic Cards
+                  DashboardHeader(
+                    interactionResetToken: _interactionResetToken,
+                  ),
+                  const SizedBox(height: 28.0),
 
-          // Primary Actions & Workspace Section Heading
-          Text(
-            'PRIMARY ACTIONS & WORKSPACE',
-            style: TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 12.0,
-              fontWeight: FontWeight.w700,
-              color: AppColors.secondaryText,
-              letterSpacing: 1.1,
-            ),
-          ),
-          const SizedBox(height: 14.0),
+                  // Primary Actions & Workspace Section Heading
+                  Text(
+                    'PRIMARY ACTIONS & WORKSPACE',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 12.0,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.secondaryText,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 14.0),
 
-          // Responsive 5-column / adaptive grid of the 10 Workspace Cards
-          LayoutBuilder(
-            builder: (context, gridConstraints) {
-              final double width = gridConstraints.maxWidth;
-              final int crossAxisCount;
+                  // Responsive 5-column / adaptive grid of the 10 Workspace Cards
+                  LayoutBuilder(
+                    builder: (context, gridConstraints) {
+                      final double width = gridConstraints.maxWidth;
+                      final int crossAxisCount;
 
-              if (width >= 1050) {
-                crossAxisCount = 5; // 5 columns on desktop wide view
-              } else if (width >= 750) {
-                crossAxisCount = 3; // 3 columns on tablet view
-              } else if (width >= 480) {
-                crossAxisCount = 2; // 2 columns on small screens
-              } else {
-                crossAxisCount = 1; // 1 column on very narrow mobile screens
-              }
+                      if (width >= 1050) {
+                        crossAxisCount = 5; // 5 columns on desktop wide view
+                      } else if (width >= 750) {
+                        crossAxisCount = 3; // 3 columns on tablet view
+                      } else if (width >= 480) {
+                        crossAxisCount = 2; // 2 columns on small screens
+                      } else {
+                        crossAxisCount =
+                            1; // 1 column on very narrow mobile screens
+                      }
 
-              return GridView.builder(
-                physics: const NeverScrollableScrollPhysics(),
-                shrinkWrap: true,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  mainAxisSpacing: 14.0,
-                  crossAxisSpacing: 14.0,
-                  mainAxisExtent: 145.0,
-                ),
-                itemCount: _workspaceItems.length,
-                itemBuilder: (context, index) {
-                  final item = _workspaceItems[index];
-                  final isCardSelected = _activeCardIndex != null &&
-                      item.targetIndex == _activeCardIndex;
-                  return WorkspaceCard(
-                    title: item.title,
-                    subtitle: item.subtitle,
-                    icon: item.icon,
-                    isSelected: isCardSelected,
-                    onTap: item.targetIndex != null
-                        ? () => _onCardTap(item.targetIndex!)
-                        : null,
-                  );
-                },
-              );
-            },
-          ),
-          const SizedBox(height: 32.0),
+                      return GridView.builder(
+                        physics: const NeverScrollableScrollPhysics(),
+                        shrinkWrap: true,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          mainAxisSpacing: 14.0,
+                          crossAxisSpacing: 14.0,
+                          mainAxisExtent: 145.0,
+                        ),
+                        itemCount: _workspaceItems.length,
+                        itemBuilder: (context, index) {
+                          final item = _workspaceItems[index];
+                          return WorkspaceCard(
+                            key: ValueKey(
+                              'workspace-${item.targetIndex}-$_interactionResetToken',
+                            ),
+                            title: item.title,
+                            subtitle: item.subtitle,
+                            icon: item.icon,
+                            interactionResetToken: _interactionResetToken,
+                            onTap: item.targetIndex != null
+                                ? () => _onNavigate(item.targetIndex!)
+                                : null,
+                          );
+                        },
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 32.0),
 
-          // Recent File Exchanges Section
-          const RecentExchangesSection(),
+                  // Recent File Exchanges Section
+                  const RecentExchangesSection(),
                 ],
               ),
             ),

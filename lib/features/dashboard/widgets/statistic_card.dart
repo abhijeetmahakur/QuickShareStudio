@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+
 import '../../../core/constants.dart';
 
 /// Reusable interactive statistic card for the QuickShare Studio Dashboard.
@@ -7,12 +9,14 @@ class StatisticCard extends StatefulWidget {
   final String value;
   final String label;
   final bool isAccent;
+  final int interactionResetToken;
 
   const StatisticCard({
     super.key,
     required this.value,
     required this.label,
     this.isAccent = false,
+    this.interactionResetToken = 0,
   });
 
   @override
@@ -23,6 +27,14 @@ class _StatisticCardState extends State<StatisticCard> {
   bool _isHovered = false;
 
   @override
+  void didUpdateWidget(covariant StatisticCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.interactionResetToken != widget.interactionResetToken) {
+      _isHovered = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -30,8 +42,14 @@ class _StatisticCardState extends State<StatisticCard> {
 
         return MouseRegion(
           cursor: SystemMouseCursors.basic,
-          onEnter: (_) => setState(() => _isHovered = true),
-          onExit: (_) => setState(() => _isHovered = false),
+          onEnter: (event) {
+            if (event.kind == PointerDeviceKind.mouse && !_isHovered) {
+              setState(() => _isHovered = true);
+            }
+          },
+          onExit: (_) {
+            if (_isHovered) setState(() => _isHovered = false);
+          },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             curve: Curves.easeOutCubic,

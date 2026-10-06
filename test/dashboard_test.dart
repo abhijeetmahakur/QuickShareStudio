@@ -1,7 +1,6 @@
-import 'dart:typed_data';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:quickshare/core/constants.dart';
@@ -14,7 +13,6 @@ import 'package:quickshare/features/dashboard/widgets/statistic_card.dart';
 import 'package:quickshare/features/dashboard/widgets/workspace_card.dart';
 import 'package:quickshare/features/dashboard/widgets/recent_exchanges_section.dart';
 import 'package:quickshare/features/clipboard/universal_clipboard_view.dart';
-import 'package:quickshare/features/security/security_settings_view.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -61,7 +59,7 @@ void main() {
   });
 
   group('B. WorkspaceCard Tests', () {
-    testWidgets('hover stays neutral while explicit selection is highlighted', (
+    testWidgets('starts neutral and clears mouse hover on exit', (
       tester,
     ) async {
       var tapped = false;
@@ -72,7 +70,6 @@ void main() {
               title: 'Universal Clipboard',
               subtitle: 'Smart sync text & images',
               icon: Icons.content_paste_rounded,
-              isSelected: false,
               onTap: () => tapped = true,
             ),
           ),
@@ -86,39 +83,63 @@ void main() {
         tester.widget<Icon>(find.byIcon(Icons.content_paste_rounded)).color,
         AppColors.white,
       );
-      final cardDecoration = tester
-          .widget<AnimatedContainer>(
-            find.ancestor(
-              of: find.text('Universal Clipboard'),
-              matching: find.byType(AnimatedContainer),
-            ),
-          )
-          .decoration as BoxDecoration;
-      expect((cardDecoration.border! as Border).top.color, AppColors.subtleBorder);
-
-      final card = find.ancestor(
-        of: find.text('Universal Clipboard'),
-        matching: find.byType(InkWell),
+      final cardDecoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: find.text('Universal Clipboard'),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(
+        (cardDecoration.border! as Border).top.color,
+        AppColors.subtleBorder,
       );
+
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await mouse.addPointer(location: Offset.zero);
-      await mouse.moveTo(tester.getCenter(card));
+      await mouse.moveTo(tester.getCenter(find.byType(WorkspaceCard)));
       await tester.pump(const Duration(milliseconds: 200));
       expect(
         tester.widget<Icon>(find.byIcon(Icons.content_paste_rounded)).color,
         AppColors.white,
       );
-      final hoveredCardDecoration = tester
-          .widget<AnimatedContainer>(
-            find.ancestor(
-              of: find.text('Universal Clipboard'),
-              matching: find.byType(AnimatedContainer),
-            ),
-          )
-          .decoration as BoxDecoration;
+      final hoveredCardDecoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: find.text('Universal Clipboard'),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
       expect(
         (hoveredCardDecoration.border! as Border).top.color,
         AppColors.subtleBorderLight,
+      );
+
+      await mouse.moveTo(const Offset(900, 700));
+      await tester.pump(const Duration(milliseconds: 200));
+      final exitedCardDecoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: find.text('Universal Clipboard'),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(
+        (exitedCardDecoration.border! as Border).top.color,
+        AppColors.subtleBorder,
+      );
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.content_paste_rounded)).color,
+        AppColors.white,
       );
 
       await tester.tap(find.text('Universal Clipboard'));
@@ -126,38 +147,150 @@ void main() {
       expect(tapped, isTrue);
     });
 
-    testWidgets('highlights immediately when isSelected is true without hover', (
-      tester,
-    ) async {
+    testWidgets(
+      'keyboard focus appears on Tab and mouse click does not focus',
+      (tester) async {
+        var activatedByKeyboard = false;
+        await tester.pumpWidget(
+          buildTestWidget(
+            child: Listener(
+              onPointerDown: (_) =>
+                  FocusManager.instance.primaryFocus?.unfocus(),
+              child: Scaffold(
+                body: WorkspaceCard(
+                  title: 'Universal Clipboard',
+                  subtitle: 'Smart sync text & images',
+                  icon: Icons.content_paste_rounded,
+                  onTap: () => activatedByKeyboard = true,
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final cardText = find.text('Universal Clipboard');
+        expect(
+          (tester
+                      .widget<AnimatedContainer>(
+                        find.ancestor(
+                          of: cardText,
+                          matching: find.byType(AnimatedContainer),
+                        ),
+                      )
+                      .decoration!
+                  as BoxDecoration)
+              .border!
+              .top
+              .color,
+          isNot(AppColors.primaryAccent),
+        );
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        expect(
+          (tester
+                      .widget<AnimatedContainer>(
+                        find.ancestor(
+                          of: cardText,
+                          matching: find.byType(AnimatedContainer),
+                        ),
+                      )
+                      .decoration!
+                  as BoxDecoration)
+              .border!
+              .top
+              .color,
+          AppColors.primaryAccent,
+        );
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        expect(activatedByKeyboard, isTrue);
+
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await mouse.addPointer(location: Offset.zero);
+        await mouse.moveTo(tester.getCenter(find.byType(WorkspaceCard)));
+        await mouse.down(tester.getCenter(find.byType(WorkspaceCard)));
+        await mouse.up();
+        await tester.pump();
+        expect(
+          (tester
+                      .widget<AnimatedContainer>(
+                        find.ancestor(
+                          of: cardText,
+                          matching: find.byType(AnimatedContainer),
+                        ),
+                      )
+                      .decoration!
+                  as BoxDecoration)
+              .border!
+              .top
+              .color,
+          isNot(AppColors.primaryAccent),
+        );
+        await mouse.removePointer();
+      },
+    );
+
+    testWidgets('touch press feedback clears on release', (tester) async {
       await tester.pumpWidget(
         buildTestWidget(
-          child: const Scaffold(
+          child: Scaffold(
             body: WorkspaceCard(
               title: 'Universal Clipboard',
               subtitle: 'Smart sync text & images',
               icon: Icons.content_paste_rounded,
-              isSelected: true,
+              onTap: () {},
             ),
           ),
         ),
       );
 
-      expect(
-        tester.widget<Icon>(find.byIcon(Icons.content_paste_rounded)).color,
-        AppColors.primaryAccent,
-      );
-      final cardDecoration = tester
-          .widget<AnimatedContainer>(
-            find.ancestor(
-              of: find.text('Universal Clipboard'),
-              matching: find.byType(AnimatedContainer),
-            ),
-          )
-          .decoration as BoxDecoration;
-      expect(
-        (cardDecoration.border! as Border).top.color,
-        AppColors.primaryAccent.withValues(alpha: 0.70),
-      );
+      final card = find.byType(WorkspaceCard);
+      final touch = await tester.createGesture(kind: PointerDeviceKind.touch);
+      await touch.down(tester.getCenter(card));
+      await tester.pump();
+      final pressedDecoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: find.text('Smart sync text & images'),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(pressedDecoration.color, AppColors.subtleBorderLight);
+
+      await touch.up();
+      await tester.pump();
+      final releasedDecoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: find.text('Smart sync text & images'),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(releasedDecoration.color, AppColors.cardBg);
+
+      await touch.down(tester.getCenter(card));
+      await tester.pump();
+      await touch.cancel();
+      await tester.pump();
+      final cancelledDecoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: find.text('Smart sync text & images'),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(cancelledDecoration.color, AppColors.cardBg);
     });
   });
 
@@ -205,6 +338,47 @@ void main() {
         expect(find.byIcon(Icons.dark_mode_rounded), findsOneWidget);
       },
     );
+
+    testWidgets('sidebar hover is mouse-only and clears on exit', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(child: const Scaffold(body: Sidebar(width: 260.0))),
+      );
+
+      final label = find.text('PDF Tools');
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(tester.getCenter(label));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      var decoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: label,
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(decoration.border, isNotNull);
+
+      await mouse.moveTo(Offset.zero);
+      await tester.pump(const Duration(milliseconds: 200));
+      decoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: label,
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(decoration.border, isNull);
+      await mouse.removePointer();
+    });
   });
 
   group('D. DashboardHeader Tests', () {
@@ -221,9 +395,14 @@ void main() {
           ),
         );
 
-        expect(find.text('Own Your Transfers, Shape Your Workflow'), findsOneWidget);
         expect(
-          find.text('${engine.localDeviceName} · IP: ${engine.localIp} · Port: ${engine.localPort}'),
+          find.text('Own Your Transfers, Shape Your Workflow'),
+          findsOneWidget,
+        );
+        expect(
+          find.text(
+            '${engine.localDeviceName} · IP: ${engine.localIp} · Port: ${engine.localPort}',
+          ),
           findsOneWidget,
         );
         expect(find.text('Ready to Share'), findsOneWidget);
@@ -245,7 +424,9 @@ void main() {
         expect(find.text(newCode), findsOneWidget);
 
         // Counts update live: a paired device and a received file.
-        await tester.runAsync(() => engine.pairWithNumericCode('123456', deviceName: 'Test_Phone'));
+        await tester.runAsync(
+          () => engine.pairWithNumericCode('123456', deviceName: 'Test_Phone'),
+        );
         engine.receiveIncomingTransfer(
           senderDeviceName: 'Test_Phone',
           fileName: 'notes.pdf',
@@ -288,7 +469,9 @@ void main() {
       }
     });
 
-    testWidgets('lists real transfer history instead of placeholders', (tester) async {
+    testWidgets('lists real transfer history instead of placeholders', (
+      tester,
+    ) async {
       final engine = TransferEngine();
       engine.receiveIncomingTransfer(
         senderDeviceName: 'Test_Phone',
@@ -377,7 +560,7 @@ void main() {
     );
 
     testWidgets(
-      'Dashboard cards start unselected, single-tap toggles active card, double-tap or second-tap opens section',
+      'Dashboard cards start neutral and navigate on one tap without retaining highlight',
       (tester) async {
         tester.view.physicalSize = const Size(1280, 800);
         tester.view.devicePixelRatio = 1.0;
@@ -392,66 +575,146 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // Test 1: On load, Universal Clipboard card must NOT be selected/highlighted
-        final clipboardCards = find.widgetWithText(WorkspaceCard, 'Universal Clipboard');
+        final clipboardCards = find.widgetWithText(
+          WorkspaceCard,
+          'Universal Clipboard',
+        );
         expect(clipboardCards, findsOneWidget);
-        final initialClipboardCard = tester.widget<WorkspaceCard>(clipboardCards);
-        expect(initialClipboardCard.isSelected, isFalse);
+        final initialDecoration =
+            tester
+                    .widget<AnimatedContainer>(
+                      find.ancestor(
+                        of: find.text('Universal Clipboard').last,
+                        matching: find.byType(AnimatedContainer),
+                      ),
+                    )
+                    .decoration
+                as BoxDecoration;
+        expect(
+          (initialDecoration.border! as Border).top.color,
+          AppColors.subtleBorder,
+        );
 
-        // Test 2: Click Universal Clipboard -> becomes selected/highlighted
-        await tester.tap(clipboardCards);
-        await tester.pumpAndSettle();
-        final selectedClipboardCard = tester.widget<WorkspaceCard>(clipboardCards);
-        expect(selectedClipboardCard.isSelected, isTrue);
-
-        // Test 3: Click Transfer History -> Universal Clipboard highlight immediately disappears,
-        // Transfer History becomes highlighted
-        final historyCards = find.widgetWithText(WorkspaceCard, 'Transfer History');
-        expect(historyCards, findsOneWidget);
-        await tester.tap(historyCards);
-        await tester.pumpAndSettle();
-
-        final unselectedClipboardCard = tester.widget<WorkspaceCard>(clipboardCards);
-        final selectedHistoryCard = tester.widget<WorkspaceCard>(historyCards);
-        expect(unselectedClipboardCard.isSelected, isFalse);
-        expect(selectedHistoryCard.isSelected, isTrue);
-
-        // Test 4: Click Settings & Privacy -> only Settings & Privacy is active
-        final settingsCards = find.widgetWithText(WorkspaceCard, 'Settings & Privacy');
-        expect(settingsCards, findsOneWidget);
-        await tester.tap(settingsCards);
-        await tester.pumpAndSettle();
-
-        final unselectedHistoryCard = tester.widget<WorkspaceCard>(historyCards);
-        final selectedSettingsCard = tester.widget<WorkspaceCard>(settingsCards);
-        expect(unselectedHistoryCard.isSelected, isFalse);
-        expect(selectedSettingsCard.isSelected, isTrue);
-
-        // Test 5: Open section (by tapping already active card) and return to Dashboard ->
-        // Universal Clipboard is NOT automatically selected
-        await tester.tap(settingsCards);
-        await tester.pumpAndSettle();
-        // Now on SecuritySettingsView
-        expect(find.byType(SecuritySettingsView), findsOneWidget);
-
-        // Return to Dashboard via sidebar
-        final dashboardSidebarItem = find.text('Dashboard');
-        expect(dashboardSidebarItem, findsOneWidget);
-        await tester.tap(dashboardSidebarItem);
-        await tester.pumpAndSettle();
-
-        // Dashboard is back, nothing is active
-        final returnedClipboardCard = tester.widget<WorkspaceCard>(clipboardCards);
-        expect(returnedClipboardCard.isSelected, isFalse);
-
-        // Test 6: Double-tap / tapping twice opens section directly
-        await tester.tap(clipboardCards);
-        await tester.pump();
         await tester.tap(clipboardCards);
         await tester.pumpAndSettle();
         expect(find.byType(UniversalClipboardView), findsOneWidget);
+
+        await tester.tap(find.text('Dashboard'));
+        await tester.pumpAndSettle();
+        expect(find.text('PRIMARY ACTIONS & WORKSPACE'), findsOneWidget);
+
+        final returnedDecoration =
+            tester
+                    .widget<AnimatedContainer>(
+                      find.ancestor(
+                        of: find.text('Universal Clipboard').last,
+                        matching: find.byType(AnimatedContainer),
+                      ),
+                    )
+                    .decoration
+                as BoxDecoration;
+        expect(
+          (returnedDecoration.border! as Border).top.color,
+          AppColors.subtleBorder,
+        );
       },
     );
+
+    testWidgets('dashboard lifecycle loss clears active card hover', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          size: const Size(1280, 800),
+          child: const DashboardScreen(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final card = find.widgetWithText(WorkspaceCard, 'Universal Clipboard');
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(tester.getCenter(card));
+      await tester.pump();
+      var decoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: find.text('Smart sync text & images'),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(
+        (decoration.border! as Border).top.color,
+        AppColors.subtleBorderLight,
+      );
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      decoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: find.text('Smart sync text & images'),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect((decoration.border! as Border).top.color, AppColors.subtleBorder);
+      await mouse.removePointer();
+    });
+
+    testWidgets('mouse click cannot leave a keyboard focus outline behind', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          size: const Size(1280, 800),
+          child: const DashboardScreen(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final card = find.widgetWithText(WorkspaceCard, 'Universal Clipboard');
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(tester.getCenter(card));
+      await tester.pump();
+      await mouse.down(tester.getCenter(card));
+      await mouse.up();
+      await tester.pumpAndSettle();
+      expect(find.byType(UniversalClipboardView), findsOneWidget);
+      await tester.tap(find.text('Dashboard'));
+      await tester.pumpAndSettle();
+      await mouse.moveTo(const Offset(20, 20));
+      await tester.pumpAndSettle();
+
+      final decoration =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.ancestor(
+                      of: find.text('Universal Clipboard').last,
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect((decoration.border! as Border).top.color, AppColors.subtleBorder);
+      await mouse.removePointer();
+    });
 
     testWidgets('Mobile view mounts AppBar with menu and Drawer', (
       tester,
@@ -504,16 +767,24 @@ void main() {
       );
     });
 
-    testWidgets('Dashboard fits phone, tablet, and desktop widths', (tester) async {
+    testWidgets('Dashboard fits phone, tablet, and desktop widths', (
+      tester,
+    ) async {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       for (final width in [320.0, 360.0, 390.0, 600.0, 768.0, 1280.0]) {
         final size = Size(width, 900);
         tester.view.physicalSize = size;
-        await tester.pumpWidget(buildTestWidget(size: size, child: const DashboardScreen()));
+        await tester.pumpWidget(
+          buildTestWidget(size: size, child: const DashboardScreen()),
+        );
         await tester.pumpAndSettle();
-        expect(find.text('Own Your Transfers, Shape Your Workflow'), findsOneWidget, reason: 'width: $width');
+        expect(
+          find.text('Own Your Transfers, Shape Your Workflow'),
+          findsOneWidget,
+          reason: 'width: $width',
+        );
         expect(tester.takeException(), isNull, reason: 'width: $width');
       }
     });

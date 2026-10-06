@@ -10,7 +10,12 @@ import 'statistic_card.dart';
 /// Charcoal surface (#171717), lime green accents, no blue gradients.
 /// Displays live device status and 4 metric cards from [TransferEngine].
 class DashboardHeader extends StatelessWidget {
-  const DashboardHeader({super.key});
+  final int interactionResetToken;
+
+  const DashboardHeader({
+    super.key,
+    this.interactionResetToken = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -23,13 +28,26 @@ class DashboardHeader extends StatelessWidget {
 
     final completedCount = engine?.historyRecords.where((r) => r.status == 'completed').length ?? 0;
     final stats = [
-      StatisticCard(value: '${engine?.pairedDevices.length ?? 0}', label: 'Paired Devices'),
-      StatisticCard(value: '${engine?.receivedItems.length ?? 0}', label: 'Received Items'),
-      StatisticCard(value: '$completedCount', label: 'Completed'),
+      StatisticCard(
+        value: '${engine?.pairedDevices.length ?? 0}',
+        label: 'Paired Devices',
+        interactionResetToken: interactionResetToken,
+      ),
+      StatisticCard(
+        value: '${engine?.receivedItems.length ?? 0}',
+        label: 'Received Items',
+        interactionResetToken: interactionResetToken,
+      ),
+      StatisticCard(
+        value: '$completedCount',
+        label: 'Completed',
+        interactionResetToken: interactionResetToken,
+      ),
       StatisticCard(
         value: engine?.currentPairingSession?.numericCode ?? '---',
         label: 'Pairing Code',
         isAccent: true,
+        interactionResetToken: interactionResetToken,
       ),
     ];
     final subtitle = engine == null

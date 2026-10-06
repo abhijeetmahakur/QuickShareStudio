@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../core/constants.dart';
 import '../../../core/services/theme_service.dart';
@@ -10,6 +12,7 @@ class Sidebar extends StatelessWidget {
   final bool isDrawer;
   final double width;
   final int selectedIndex;
+  final int interactionResetToken;
   final ValueChanged<int>? onItemSelected;
   final VoidCallback? onToggleTheme;
   final bool? isDarkMode;
@@ -19,6 +22,7 @@ class Sidebar extends StatelessWidget {
     this.isDrawer = false,
     this.width = 270.0,
     this.selectedIndex = 0,
+    this.interactionResetToken = 0,
     this.onItemSelected,
     this.onToggleTheme,
     this.isDarkMode,
@@ -204,6 +208,7 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.grid_view_rounded,
                     isSelected: selectedIndex == 0,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(0),
                   ),
                   _buildNavItem(
@@ -211,6 +216,7 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.picture_as_pdf_outlined,
                     isSelected: selectedIndex == 1,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(1),
                   ),
                   // Section 9 (added later, listed next to PDF Studio where it belongs).
@@ -219,6 +225,7 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.collections_outlined,
                     isSelected: selectedIndex == 9,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(9),
                   ),
                   _buildNavItem(
@@ -226,6 +233,7 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.devices_rounded,
                     isSelected: selectedIndex == 2,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(2),
                   ),
                   _buildNavItem(
@@ -233,6 +241,7 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.arrow_upward_rounded,
                     isSelected: selectedIndex == 3,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(3),
                   ),
                   _buildNavItem(
@@ -241,6 +250,7 @@ class Sidebar extends StatelessWidget {
                     badgeText: receivedCount > 0 ? '$receivedCount' : null,
                     isSelected: selectedIndex == 4,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(4),
                   ),
                   _buildNavItem(
@@ -248,6 +258,7 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.auto_fix_high_rounded,
                     isSelected: selectedIndex == 5,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(5),
                   ),
                   _buildNavItem(
@@ -255,6 +266,7 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.content_paste_rounded,
                     isSelected: selectedIndex == 6,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(6),
                   ),
                   _buildNavItem(
@@ -262,6 +274,7 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.history_rounded,
                     isSelected: selectedIndex == 7,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(7),
                   ),
                   _buildNavItem(
@@ -269,6 +282,7 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.settings_outlined,
                     isSelected: selectedIndex == 8,
                     isDarkMode: effectiveIsDark,
+                    interactionResetToken: interactionResetToken,
                     onTap: () => onItemSelected?.call(8),
                   ),
                 ],
@@ -372,6 +386,7 @@ class Sidebar extends StatelessWidget {
     required IconData icon,
     bool isSelected = false,
     bool isDarkMode = true,
+    int interactionResetToken = 0,
     String? badgeText,
     VoidCallback? onTap,
   }) {
@@ -380,6 +395,7 @@ class Sidebar extends StatelessWidget {
       icon: icon,
       isSelected: isSelected,
       isDarkMode: isDarkMode,
+      interactionResetToken: interactionResetToken,
       badgeText: badgeText,
       onTap: onTap,
     );
@@ -391,6 +407,7 @@ class _SidebarNavItem extends StatefulWidget {
   final IconData icon;
   final bool isSelected;
   final bool isDarkMode;
+  final int interactionResetToken;
   final String? badgeText;
   final VoidCallback? onTap;
 
@@ -399,6 +416,7 @@ class _SidebarNavItem extends StatefulWidget {
     required this.icon,
     this.isSelected = false,
     this.isDarkMode = true,
+    this.interactionResetToken = 0,
     this.badgeText,
     this.onTap,
   });
@@ -408,12 +426,33 @@ class _SidebarNavItem extends StatefulWidget {
 }
 
 class _SidebarNavItemState extends State<_SidebarNavItem> {
+  final FocusNode _focusNode = FocusNode(debugLabel: 'Dashboard sidebar item');
   bool _isHovered = false;
+  bool _isPressed = false;
+  bool _showKeyboardFocus = false;
+
+  @override
+  void didUpdateWidget(covariant _SidebarNavItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.interactionResetToken != widget.interactionResetToken ||
+        oldWidget.isSelected != widget.isSelected) {
+      _isHovered = false;
+      _isPressed = false;
+      _showKeyboardFocus = false;
+      _focusNode.unfocus();
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final isSelected = widget.isSelected;
-    final isHovered = _isHovered && !isSelected;
+    final isHovered = _isHovered && !isSelected && !_showKeyboardFocus;
     final isDark = widget.isDarkMode;
 
     final hoverBg = AppColors.surfaceElevated;
@@ -421,26 +460,87 @@ class _SidebarNavItemState extends State<_SidebarNavItem> {
     final unselectedTextColor = AppColors.secondaryText;
     final hoveredTextColor = AppColors.primaryText;
 
-    final item = MouseRegion(
-      cursor: widget.onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: AnimatedContainer(
+    return FocusableActionDetector(
+      focusNode: _focusNode,
+      onShowFocusHighlight: (show) {
+        final shouldShow =
+            show &&
+            FocusManager.instance.highlightMode ==
+                FocusHighlightMode.traditional;
+        if (_showKeyboardFocus != shouldShow && mounted) {
+          setState(() => _showKeyboardFocus = shouldShow);
+        }
+      },
+      shortcuts: const <ShortcutActivator, Intent>{
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+      },
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            widget.onTap?.call();
+            return null;
+          },
+        ),
+      },
+      child: MouseRegion(
+        cursor: widget.onTap != null
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        onEnter: (event) {
+          if (event.kind == PointerDeviceKind.mouse) {
+            setState(() => _isHovered = true);
+          }
+        },
+        onExit: (_) {
+          if (_isHovered) setState(() => _isHovered = false);
+        },
+        child: InkWell(
+          canRequestFocus: false,
+          onTap: widget.onTap,
+          onTapDown: (details) {
+            if (details.kind == PointerDeviceKind.touch) {
+              setState(() => _isPressed = true);
+            }
+          },
+          onTapUp: (_) {
+            if (_isPressed) setState(() => _isPressed = false);
+          },
+          onTapCancel: () {
+            if (_isPressed) setState(() => _isPressed = false);
+          },
+          borderRadius: BorderRadius.circular(10.0),
+          splashColor: AppColors.primaryAccent.withValues(alpha: 0.1),
+          highlightColor: Colors.transparent,
+          focusColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         curve: Curves.easeOutCubic,
         margin: const EdgeInsets.only(bottom: 3.0),
         decoration: BoxDecoration(
           color: isSelected
               ? AppColors.primaryAccent
-              : (isHovered ? hoverBg : Colors.transparent),
+              : (_isPressed
+                    ? hoverBg
+                    : (isHovered ? hoverBg : Colors.transparent)),
           borderRadius: BorderRadius.circular(10.0),
-          border: isHovered
+          border: (_showKeyboardFocus || isHovered)
               ? Border.all(
-                  color: AppColors.primaryAccent.withValues(alpha: 0.28),
+                  color: _showKeyboardFocus
+                      ? AppColors.primaryAccent
+                      : AppColors.primaryAccent.withValues(alpha: 0.28),
                   width: 1.0,
                 )
               : null,
-          boxShadow: isHovered
+          boxShadow: _showKeyboardFocus
+              ? [
+                  BoxShadow(
+                    color: AppColors.primaryAccent.withValues(alpha: 0.12),
+                    blurRadius: 10.0,
+                  ),
+                ]
+              : isHovered
               ? [
                   BoxShadow(
                     color: isDark
@@ -460,7 +560,9 @@ class _SidebarNavItemState extends State<_SidebarNavItem> {
               size: 18.0,
               color: isSelected
                   ? AppColors.nearBlack
-                  : (isHovered ? (AppColors.primaryAccent) : unselectedIconColor),
+                  : (isHovered || _showKeyboardFocus
+                        ? AppColors.primaryAccent
+                        : unselectedIconColor),
             ),
             const SizedBox(width: 12.0),
             Expanded(
@@ -472,7 +574,9 @@ class _SidebarNavItemState extends State<_SidebarNavItem> {
                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
                   color: isSelected
                       ? AppColors.nearBlack
-                      : (isHovered ? hoveredTextColor : unselectedTextColor),
+                      : (isHovered || _showKeyboardFocus
+                            ? hoveredTextColor
+                            : unselectedTextColor),
                 ),
               ),
             ),
@@ -499,18 +603,9 @@ class _SidebarNavItemState extends State<_SidebarNavItem> {
               ),
           ],
         ),
+          ),
+        ),
       ),
     );
-
-    if (widget.onTap != null) {
-      return InkWell(
-        onTap: widget.onTap,
-        borderRadius: BorderRadius.circular(10.0),
-        splashColor: AppColors.primaryAccent.withValues(alpha: 0.1),
-        highlightColor: Colors.transparent,
-        child: item,
-      );
-    }
-    return item;
   }
 }
