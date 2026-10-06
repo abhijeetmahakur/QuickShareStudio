@@ -3,12 +3,20 @@ import 'platform_updater_io.dart' if (dart.library.js_interop) 'platform_updater
 
 /// Outcome of installing an update on this platform.
 class InstallResult {
-  const InstallResult(this.ok, this.message, {this.openReleasePage = false});
+  const InstallResult(
+    this.ok,
+    this.message, {
+    this.openReleasePage = false,
+    this.signatureMismatch = false,
+  });
   final bool ok;
   final String message;
 
   /// The update cannot be applied in-app; send the user to the download page.
   final bool openReleasePage;
+
+  /// Android rejected the package because its signing certificate differs.
+  final bool signatureMismatch;
 }
 
 /// Whether this platform can download and install updates by itself.

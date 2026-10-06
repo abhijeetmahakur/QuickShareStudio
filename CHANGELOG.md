@@ -2,6 +2,13 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.19] - 2026-10-07
+
+### Fixed
+- Android release builds require the permanent release keystore, and CI verifies the APK certificate against a pinned SHA-256 fingerprint.
+- Android signature mismatch errors appear once in the update dialog with a release-page action and reinstall guidance.
+- Release-note headings are cleaned up, and empty release notes use a readable fallback.
+
 ## [2.0.18] - 2026-10-07
 
 ### Fixed

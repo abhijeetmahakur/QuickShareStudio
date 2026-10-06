@@ -68,6 +68,9 @@ class AppUpdateService extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
+  bool _signatureMismatch = false;
+  bool get signatureMismatch => _signatureMismatch;
+
   // Published releases registry (deployment source)
   AppUpdateInfo? _publishedRemoteRelease;
 
@@ -336,13 +339,17 @@ class AppUpdateService extends ChangeNotifier {
             .map((l) => l.substring(2))
             .take(8)
             .toList();
+    final description = body
+        .split('\n')
+        .map((line) => line.trim())
+        .firstWhere((line) => line.isNotEmpty, orElse: () => '');
     final tag = (data['tag_name'] as String? ?? '0.0.0').replaceFirst(RegExp(r'^v'), '');
     return AppUpdateInfo(
       version: tag,
       currentVersion: _currentVersion,
       title: data['name'] as String? ?? 'QuickShare Studio v$tag',
-      description: body.isEmpty ? 'A new version of QuickShare Studio is available.' : body.split('\n').first,
-      releaseNotes: notes,
+      description: description.isEmpty ? 'Bug fixes and improvements.' : description,
+      releaseNotes: notes.isEmpty ? const ['Bug fixes and improvements'] : notes,
       publishedAt: DateTime.tryParse(data['published_at'] as String? ?? '') ?? DateTime.now(),
       packageSizeBytes: (asset?['size'] as num?)?.toInt() ?? 0,
       packageSha256: sha256,
@@ -365,6 +372,18 @@ class AppUpdateService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> openReleasePage(AppUpdateInfo update) async {
+    final opened = await launchUrl(
+      Uri.parse(update.downloadUrl),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened) {
+      _statusMessage = 'Could not open the release page. Visit ${update.downloadUrl}';
+      notifyListeners();
+    }
+    return opened;
+  }
+
   // -------------------------------------------------------------
   // Safe Multi-Stage Update Process (Requirement 13.E)
   // -------------------------------------------------------------
@@ -380,11 +399,14 @@ class AppUpdateService extends ChangeNotifier {
       return false;
     }
 
+    _signatureMismatch = false;
+
     if (_isGitHubRelease(_latestUpdate!) && canSelfUpdate && !(engine?.hasActiveTransfers ?? false)) {
       final update = _latestUpdate!;
       _status = UpdateStatus.downloading;
       _updateProgress = 0;
       _errorMessage = null;
+      _signatureMismatch = false;
       _statusMessage = 'Downloading v${update.version}...';
       notifyListeners();
       final result = await downloadAndInstall(update, (p) {
@@ -402,8 +424,9 @@ class AppUpdateService extends ChangeNotifier {
       }
       _status = UpdateStatus.failed;
       _errorMessage = result.message;
+      _signatureMismatch = result.signatureMismatch;
       notifyListeners();
-      if (result.openReleasePage) {
+      if (result.openReleasePage && !result.signatureMismatch) {
         await launchUrl(Uri.parse(update.downloadUrl), mode: LaunchMode.externalApplication);
       }
       onError?.call(result.message);
@@ -448,6 +471,7 @@ class AppUpdateService extends ChangeNotifier {
     _statusMessage = 'Downloading update package (v${_latestUpdate!.version})...';
     _downloadSpeed = '3.8 MB/s';
     _errorMessage = null;
+    _signatureMismatch = false;
     notifyListeners();
 
     try {
@@ -553,6 +577,7 @@ class AppUpdateService extends ChangeNotifier {
     _isUpdatePostponed = false;
     _updateProgress = 0.0;
     _errorMessage = null;
+    _signatureMismatch = false;
     _statusMessage = 'Up to date';
     notifyListeners();
   }

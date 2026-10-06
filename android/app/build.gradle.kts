@@ -6,13 +6,28 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Release signing. In-app updates only work when every release is signed with the same key,
-// so CI writes android/key.properties + the keystore from repository secrets (see README).
-// Without them, release builds fall back to the debug key (fine for local testing only).
+// Release signing is mandatory for release builds. Values may come from Gradle properties,
+// environment variables, or the ignored android/key.properties file.
 val keystoreProperties = Properties().apply {
     val file = rootProject.file("key.properties")
     if (file.exists()) file.inputStream().use { load(it) }
 }
+
+fun signingValue(environmentName: String, propertyName: String = environmentName): String? =
+    providers.gradleProperty(environmentName).orNull?.takeIf { it.isNotBlank() }
+        ?: System.getenv(environmentName)?.takeIf { it.isNotBlank() }
+        ?: keystoreProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
+
+val releaseStorePath = signingValue("ANDROID_KEYSTORE_PATH", "storeFile")
+val releaseStorePassword = signingValue("ANDROID_KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = signingValue("ANDROID_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = signingValue("ANDROID_KEY_PASSWORD", "keyPassword")
+val releaseSigningValues = mapOf(
+    "ANDROID_KEYSTORE_PATH" to releaseStorePath,
+    "ANDROID_KEYSTORE_PASSWORD" to releaseStorePassword,
+    "ANDROID_KEY_ALIAS" to releaseKeyAlias,
+    "ANDROID_KEY_PASSWORD" to releaseKeyPassword,
+)
 
 android {
     namespace = "com.quickshare.quickshare"
@@ -40,21 +55,35 @@ android {
     }
 
     signingConfigs {
-        if (keystoreProperties.getProperty("storeFile") != null) {
-            create("release") {
-                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
-            }
+        create("release") {
+            storeFile = rootProject.file(releaseStorePath ?: ".missing-release-keystore")
+            storePassword = releaseStorePassword ?: ""
+            keyAlias = releaseKeyAlias ?: ""
+            keyPassword = releaseKeyPassword ?: ""
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
+}
+
+val validateReleaseSigning = tasks.register("validateReleaseSigning") {
+    doLast {
+        val missing = releaseSigningValues.filterValues { it.isNullOrBlank() }.keys
+        if (missing.isNotEmpty()) {
+            throw GradleException("Release signing is required. Configure: ${missing.joinToString()}")
+        }
+        if (!rootProject.file(releaseStorePath!!).isFile) {
+            throw GradleException("The configured Android release keystore does not exist.")
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preReleaseBuild") dependsOn(validateReleaseSigning)
 }
 
 kotlin {

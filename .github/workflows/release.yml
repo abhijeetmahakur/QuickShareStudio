@@ -137,47 +137,46 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: ${{ secrets.ANDROID_RELEASE_CERT_SHA256 }}
         run: |
           set -euo pipefail
-          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
-            echo "$KEYSTORE_BASE64" | base64 --decode > android/release.jks
-            {
-              echo "storeFile=release.jks"
-              echo "storePassword=$KEYSTORE_PASSWORD"
-              echo "keyAlias=$KEY_ALIAS"
-              echo "keyPassword=$KEY_PASSWORD"
-            } > android/key.properties
-            echo "Signing with the configured Android release key."
-          else
-            echo "::warning::No Android release signing secrets configured; building release APK with default config."
-          fi
+          : "${KEYSTORE_BASE64:?Set the ANDROID_KEYSTORE_BASE64 Actions secret.}"
+          : "${KEYSTORE_PASSWORD:?Set the ANDROID_KEYSTORE_PASSWORD Actions secret.}"
+          : "${KEY_ALIAS:?Set the ANDROID_KEY_ALIAS Actions secret.}"
+          : "${KEY_PASSWORD:?Set the ANDROID_KEY_PASSWORD Actions secret.}"
+          : "${EXPECTED_CERT_SHA256:?Set the ANDROID_RELEASE_CERT_SHA256 Actions secret.}"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/release.jks
+          test -s android/release.jks
+          echo "ANDROID_KEYSTORE_PATH=release.jks" >> "$GITHUB_ENV"
+          echo "Configured the required Android release keystore."
       - name: Build APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           flutter pub get
           flutter build apk --release
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/QuickShareStudio-Android.apk
-      - name: Verify Android update signature matches the latest published APK
+      - name: Verify Android release certificate fingerprint
         env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          EXPECTED_CERT_SHA256: ${{ secrets.ANDROID_RELEASE_CERT_SHA256 }}
         run: |
           set -euo pipefail
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            curl -fL --retry 3 \
-              https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest/download/QuickShareStudio-Android.apk \
-              -o "$RUNNER_TEMP/QuickShareStudio-previous.apk"
-            APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-            if [ -z "$APKSIGNER" ]; then echo "::error::Android apksigner was not found."; exit 1; fi
-            previous_cert="$("$APKSIGNER" verify --print-certs "$RUNNER_TEMP/QuickShareStudio-previous.apk" | awk -F ': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}' | tr -d '[:space:]')"
-            release_cert="$("$APKSIGNER" verify --print-certs dist/QuickShareStudio-Android.apk | awk -F ': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}' | tr -d '[:space:]')"
-            if [ -z "$previous_cert" ] || [ -z "$release_cert" ] || [ "$previous_cert" != "$release_cert" ]; then
-              echo "::error::The Android release APK does not match the published signing certificate. Refusing to publish an update that cannot install over older versions."
-              exit 1
-            fi
-            echo "Android signing certificate matches the latest published APK."
-          else
-            echo "Skipping certificate comparison as no signing key secret was configured."
+          expected_cert="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')"
+          if [[ ! "$expected_cert" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "::error::ANDROID_RELEASE_CERT_SHA256 must be a SHA-256 certificate fingerprint."
+            exit 1
           fi
+          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          if [ -z "$APKSIGNER" ]; then echo "::error::Android apksigner was not found."; exit 1; fi
+          release_cert="$("$APKSIGNER" verify --print-certs dist/QuickShareStudio-Android.apk | awk -F ': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}' | tr -d '[:space:]:' )"
+          if [ -z "$release_cert" ] || [ "$release_cert" != "$expected_cert" ]; then
+            echo "::error::The Android release APK certificate does not match ANDROID_RELEASE_CERT_SHA256. Refusing to publish."
+            exit 1
+          fi
+          echo "Android release APK matches the pinned certificate fingerprint."
       - uses: actions/upload-artifact@v4
         with:
           name: android-package

@@ -1716,6 +1716,7 @@ void main() {
       expect(find.textContaining('v2.2.0'), findsWidgets);
       expect(find.text('QuickShare Studio 2.2.0 Release'), findsOneWidget);
       expect(find.text('### Fixed'), findsNothing);
+      expect(find.text('Fixed'), findsOneWidget);
       final dialogBody = find.descendant(
         of: find.byType(Dialog),
         matching: find.byType(SingleChildScrollView),
@@ -1741,6 +1742,48 @@ void main() {
       // Verify dialog dismissed & update marked as postponed
       expect(find.text('SOFTWARE UPDATE AVAILABLE'), findsNothing);
       expect(updateService.isPostponed, isTrue);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('UpdateDialog shows fallback text when release notes are empty', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final updateService = AppUpdateService();
+      final engine = TransferEngine();
+      engine.stopTimers();
+      updateService.resetTestingState();
+      final updateInfo = AppUpdateInfo(
+        version: '2.2.0',
+        currentVersion: AppConstants.appVersion,
+        title: 'QuickShare Studio 2.2.0 Release',
+        description: '',
+        releaseNotes: const [],
+        publishedAt: DateTime.now(),
+        packageSizeBytes: 0,
+        packageSha256: '',
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<TransferEngine>.value(value: engine),
+            ChangeNotifierProvider<AppUpdateService>.value(value: updateService),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: Scaffold(
+              body: UpdateDialog(update: updateInfo),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bug fixes and improvements.'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
     });

@@ -180,7 +180,8 @@ rm -f "$download"
     'signature_mismatch' => const InstallResult(false,
         'This update is signed with a different key than the installed app, so Android would reject it. '
         'Uninstall this version and install the new one from the release page.',
-        openReleasePage: true),
+        openReleasePage: true,
+        signatureMismatch: true),
     'wrong_package' => const InstallResult(false, 'The downloaded file is not QuickShare Studio. It was not installed.'),
     _ => const InstallResult(false, 'The downloaded file is not a valid Android package.'),
   };

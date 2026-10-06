@@ -13,11 +13,8 @@ String _plainReleaseText(String text) => text
     .trim();
 
 String _updateDescription(AppUpdateInfo update) {
-  if (RegExp(r'^#{1,6}\s+.+$').hasMatch(update.description.trim())) {
-    return 'Bug fixes and improvements.';
-  }
   final description = _plainReleaseText(update.description);
-  return description.isEmpty ? 'A new version is ready to install.' : description;
+  return description.isEmpty ? 'Bug fixes and improvements.' : description;
 }
 
 class UpdateDialog extends StatefulWidget {
@@ -56,17 +53,14 @@ class _UpdateDialogState extends State<UpdateDialog> {
           );
         }
       },
-      onError: (err) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Update Error: $err'),
-              backgroundColor: Colors.red.shade900,
-            ),
-          );
-        }
-      },
     );
+  }
+
+  Future<void> _handleOpenReleasePage(
+    AppUpdateService updateService,
+    AppUpdateInfo update,
+  ) async {
+    await updateService.openReleasePage(update);
   }
 
   void _handleUpdateLater(AppUpdateService updateService) {
@@ -84,6 +78,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
         updateService.status == UpdateStatus.staging;
     final isApplied = updateService.status == UpdateStatus.applied;
     final isFailed = updateService.status == UpdateStatus.failed;
+    final signatureMismatch = updateService.signatureMismatch;
     final warningMessage = (updateService.errorMessage ?? '').trim();
     final screenSize = MediaQuery.sizeOf(context);
     final isCompact = screenSize.width < 600;
@@ -346,9 +341,30 @@ class _UpdateDialogState extends State<UpdateDialog> {
                     const Icon(Icons.error_outline, color: Colors.redAccent, size: 20),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
-                        warningMessage.isNotEmpty ? warningMessage : 'Update could not be completed.',
-                        style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            warningMessage.isNotEmpty
+                                ? warningMessage
+                                : 'Update could not be completed.',
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (signatureMismatch) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Why? Android only allows updates signed with the same certificate. Back up anything stored only in the app, uninstall once, then install this release. Future releases signed with the permanent key can update normally.',
+                              style: TextStyle(
+                                color: Colors.red.shade200,
+                                fontSize: 11.5,
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
@@ -408,9 +424,19 @@ class _UpdateDialogState extends State<UpdateDialog> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         elevation: 3,
                       ),
-                      icon: const Icon(Icons.download_rounded, size: 18),
-                      label: const Text('Update Now', style: TextStyle(fontWeight: FontWeight.bold)),
-                      onPressed: () => _handleUpdateNow(updateService, engine),
+                      icon: Icon(
+                        signatureMismatch
+                            ? Icons.open_in_new_rounded
+                            : Icons.download_rounded,
+                        size: 18,
+                      ),
+                      label: Text(
+                        signatureMismatch ? 'Open Release Page' : 'Update Now',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      onPressed: signatureMismatch
+                          ? () => _handleOpenReleasePage(updateService, update)
+                          : () => _handleUpdateNow(updateService, engine),
                     ),
                   ),
                 ],
