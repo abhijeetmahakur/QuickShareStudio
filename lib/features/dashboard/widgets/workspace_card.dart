@@ -7,7 +7,6 @@ class WorkspaceCard extends StatefulWidget {
   final String title;
   final String subtitle;
   final IconData icon;
-  final bool hasLimeOutline;
   final VoidCallback? onTap;
 
   const WorkspaceCard({
@@ -15,7 +14,6 @@ class WorkspaceCard extends StatefulWidget {
     required this.title,
     required this.subtitle,
     required this.icon,
-    this.hasLimeOutline = false,
     this.onTap,
   });
 
@@ -28,7 +26,9 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
 
   @override
   Widget build(BuildContext context) {
-    final isHighlighted = widget.hasLimeOutline || _isHovered;
+    // Workspace cards are actions, not active-page indicators. Lime emphasis
+    // is reserved for pointer hover; the sidebar tracks the selected page.
+    final isHighlighted = _isHovered;
 
     final cardContent = MouseRegion(
       cursor: widget.onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
@@ -57,12 +57,6 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
                 blurRadius: 16.0,
                 spreadRadius: 0.5,
                 offset: const Offset(0, 4),
-              )
-            else if (widget.hasLimeOutline)
-              BoxShadow(
-                color: AppColors.primaryAccent.withValues(alpha: 0.12),
-                blurRadius: 12.0,
-                offset: const Offset(0, 2),
               ),
             BoxShadow(
               color: Colors.black.withValues(alpha: _isHovered ? 0.35 : 0.2),

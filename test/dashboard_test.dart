@@ -1,7 +1,10 @@
 import 'dart:typed_data';
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:quickshare/core/constants.dart';
 import 'package:quickshare/data/services/transfer_engine.dart';
 import 'package:quickshare/data/services/app_update_service.dart';
 import 'package:quickshare/features/dashboard/dashboard_screen.dart';
@@ -56,16 +59,19 @@ void main() {
   });
 
   group('B. WorkspaceCard Tests', () {
-    testWidgets('renders title, subtitle, icon, and outline correctly', (
+    testWidgets('starts neutral and only highlights while hovered', (
       tester,
     ) async {
+      var tapped = false;
       await tester.pumpWidget(
         buildTestWidget(
-          child: const WorkspaceCard(
-            title: 'Universal Clipboard',
-            subtitle: 'Smart sync text & images',
-            icon: Icons.content_paste_rounded,
-            hasLimeOutline: true,
+          child: Scaffold(
+            body: WorkspaceCard(
+              title: 'Universal Clipboard',
+              subtitle: 'Smart sync text & images',
+              icon: Icons.content_paste_rounded,
+              onTap: () => tapped = true,
+            ),
           ),
         ),
       );
@@ -73,6 +79,36 @@ void main() {
       expect(find.text('Universal Clipboard'), findsOneWidget);
       expect(find.text('Smart sync text & images'), findsOneWidget);
       expect(find.byIcon(Icons.content_paste_rounded), findsOneWidget);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.content_paste_rounded)).color,
+        AppColors.white,
+      );
+      final cardDecoration = tester
+          .widget<AnimatedContainer>(
+            find.ancestor(
+              of: find.text('Universal Clipboard'),
+              matching: find.byType(AnimatedContainer),
+            ),
+          )
+          .decoration as BoxDecoration;
+      expect((cardDecoration.border! as Border).top.color, AppColors.subtleBorder);
+
+      final card = find.ancestor(
+        of: find.text('Universal Clipboard'),
+        matching: find.byType(InkWell),
+      );
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(tester.getCenter(card));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.content_paste_rounded)).color,
+        AppColors.primaryAccent,
+      );
+
+      await tester.tap(find.text('Universal Clipboard'));
+      await tester.pump();
+      expect(tapped, isTrue);
     });
   });
 

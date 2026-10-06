@@ -59,61 +59,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // Primary workspace cards for the app's available features
-  static const List<({String title, String subtitle, IconData icon, bool hasLimeOutline, int? targetIndex})> _workspaceItems = [
+  static const List<({String title, String subtitle, IconData icon, int? targetIndex})> _workspaceItems = [
     (
       title: 'Create PDF',
       subtitle: 'Multi-page studio & 7 layouts',
       icon: Icons.picture_as_pdf_outlined,
-      hasLimeOutline: false,
       targetIndex: 1,
     ),
     (
       title: 'Connect Device',
       subtitle: 'QR code & 6-digit code pairing',
       icon: Icons.qr_code_rounded,
-      hasLimeOutline: false,
       targetIndex: 2,
     ),
     (
       title: 'Send Files',
       subtitle: 'Transfer to one or multiple devices',
       icon: Icons.arrow_upward_rounded,
-      hasLimeOutline: false,
       targetIndex: 3,
     ),
     (
       title: 'Received Items',
       subtitle: 'View & download inbound files',
       icon: Icons.arrow_downward_rounded,
-      hasLimeOutline: false,
       targetIndex: 4,
     ),
     (
       title: 'PDF Tools',
       subtitle: 'Merge, split, compress, OCR',
       icon: Icons.auto_fix_high_rounded,
-      hasLimeOutline: false,
       targetIndex: 5,
     ),
     (
       title: 'Universal Clipboard',
       subtitle: 'Smart sync text & images',
       icon: Icons.content_paste_rounded,
-      hasLimeOutline: true, // Subtle lime-green outline per specification
       targetIndex: 6,
     ),
     (
       title: 'Transfer History',
       subtitle: 'Inspect logs, verify & resend',
       icon: Icons.history_rounded,
-      hasLimeOutline: false,
       targetIndex: 7,
     ),
     (
       title: 'Settings & Privacy',
       subtitle: 'Appearance, storage, updates',
       icon: Icons.settings_outlined,
-      hasLimeOutline: false,
       targetIndex: 8,
     ),
   ];
@@ -338,7 +330,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     title: item.title,
                     subtitle: item.subtitle,
                     icon: item.icon,
-                    hasLimeOutline: item.hasLimeOutline,
                     onTap: item.targetIndex != null ? () => _onNavigate(item.targetIndex!) : null,
                   );
                 },

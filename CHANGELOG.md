@@ -2,6 +2,11 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.9] - 2026-10-06
+
+### Fixed
+- Universal Clipboard no longer appears selected on the Dashboard before it is opened.
+
 ## [2.0.8] - 2026-10-06
 
 ### Added
