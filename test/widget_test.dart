@@ -659,7 +659,7 @@ void main() {
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
-    });
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
     testWidgets('PdfToolsView mounts 4 tabs and allows switching tabs', (WidgetTester tester) async {
       tester.view.physicalSize = const Size(1280, 850);

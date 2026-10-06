@@ -2,6 +2,13 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.18] - 2026-10-07
+
+### Fixed
+- **Received Files fits phones:** file cards show the name, sender, size and location across the full width with Open and Download underneath, instead of squeezing the details into a one-letter-wide column; the status card, title and filter chips fit small screens too.
+- **Download saves to Downloads on Android:** Download makes sure the file is in Downloads/QuickShare, copying in files received before 2.0.17 from app storage, and offers to open it.
+- **Smoother Android saving:** received files are written to Downloads off the UI thread in 512 KB blocks, and a transfer falls back to app storage instead of failing when Downloads cannot be used.
+
 ## [2.0.17] - 2026-10-07
 
 ### Fixed

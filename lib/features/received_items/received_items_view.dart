@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../core/services/android_downloads.dart';
 import '../../core/services/file_actions.dart';
 import '../../core/widgets/demo_mode_notice.dart';
 import 'package:provider/provider.dart';
@@ -14,7 +15,7 @@ import '../../core/widgets/hover_card.dart';
 String _displayReceivedPath(ReceivedItemModel item) {
   if (item.savedToPath.startsWith('content://') ||
       item.savedToPath.startsWith('file://')) {
-    return 'Downloads/QuickShare/${item.fileName}';
+    return '${AndroidDownloads.folder}/${item.fileName}';
   }
   return item.savedToPath;
 }
@@ -512,12 +513,7 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
   // Download or Save to Device Action
   // -------------------------------------------------------------
   Future<void> _downloadOrSaveItem(BuildContext context, ReceivedItemModel item, TransferEngine engine) async {
-    if (item.savedToPath.startsWith('content://') || item.savedToPath.startsWith('file://')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Already saved to ${_displayReceivedPath(item)}.')),
-      );
-      return;
-    }
+    if (AndroidDownloads.supported) return _saveToPhoneDownloads(context, item, engine);
 
     final bytes = item.bytes.isNotEmpty ? item.bytes : engine.fileDataStore[item.fileName];
     if (bytes == null || bytes.isEmpty) {
@@ -540,25 +536,65 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
     await engine.downloadOrSaveReceivedItem(item);
 
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: AppColors.charcoalSurface,
-          content: Row(
-            children: [
-              Icon(Icons.check_circle_rounded, color: AppColors.primaryAccent, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  '$message (${FormatUtils.formatBytes(item.fileSizeBytes)}).',
-                  style: TextStyle(fontFamily: 'Poppins', color: AppColors.primaryText, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      _showSavedSnackBar(ScaffoldMessenger.of(context), '$message (${FormatUtils.formatBytes(item.fileSizeBytes)}).');
     }
+  }
+
+  /// Android: makes sure the file is in the phone's Downloads/QuickShare folder. Received files
+  /// are usually saved there already; older ones are copied in from app storage.
+  Future<void> _saveToPhoneDownloads(BuildContext context, ReceivedItemModel item, TransferEngine engine) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final SavedDownload? saved;
+    try {
+      saved = await AndroidDownloads.saveReceived(
+        fileName: item.fileName,
+        path: item.savedToPath,
+        bytes: item.bytes.isNotEmpty ? item.bytes : engine.fileDataStore[item.fileName],
+      );
+    } catch (e) {
+      final reason = e is PlatformException ? e.message ?? e.code : '$e';
+      messenger.showSnackBar(SnackBar(content: Text('Could not save to ${AndroidDownloads.folder}: $reason')));
+      return;
+    }
+    if (saved == null) {
+      messenger.showSnackBar(const SnackBar(content: Text('This file is no longer on the phone.')));
+      return;
+    }
+    final savedPath = saved.path;
+    if (saved.copied) await engine.downloadOrSaveReceivedItem(item, savedPath: savedPath);
+    _showSavedSnackBar(
+      messenger,
+      saved.copied ? 'Saved to ${AndroidDownloads.folder}/${saved.name}' : 'In ${AndroidDownloads.folder}/${saved.name}',
+      onOpen: () async {
+        try {
+          await FileActions.openSaved(savedPath);
+        } catch (e) {
+          messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
+        }
+      },
+    );
+  }
+
+  void _showSavedSnackBar(ScaffoldMessengerState messenger, String message, {VoidCallback? onOpen}) {
+    messenger.showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.charcoalSurface,
+        content: Row(
+          children: [
+            Icon(Icons.check_circle_rounded, color: AppColors.primaryAccent, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: TextStyle(fontFamily: 'Poppins', color: AppColors.primaryText, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+        action: onOpen == null ? null : SnackBarAction(label: 'Open', textColor: AppColors.primaryAccent, onPressed: onOpen),
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   // -------------------------------------------------------------
@@ -731,6 +767,7 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
   @override
   Widget build(BuildContext context) {
     final engine = context.watch<TransferEngine>();
+    final isCompact = MediaQuery.sizeOf(context).width < 600;
 
     final filteredItems = _selectedFilter == null
         ? engine.receivedItems
@@ -742,7 +779,7 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
         backgroundColor: AppColors.charcoalSurface,
         elevation: 0,
         title: Text(
-          'Received Files & Background Inbox',
+          isCompact ? 'Received Files' : 'Received Files & Background Inbox',
           style: TextStyle(
             fontFamily: 'Poppins',
             fontWeight: FontWeight.w700,
@@ -796,7 +833,7 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        padding: EdgeInsets.symmetric(horizontal: isCompact ? 16 : 24, vertical: isCompact ? 16 : 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -806,7 +843,7 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
             const DemoModeNotice(),
 
             // Category Filter Chips
-            _buildFilterChips(engine),
+            _buildFilterChips(engine, compact: isCompact),
             const SizedBox(height: 18),
 
             // Received Items List
@@ -833,6 +870,107 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
   // Status & Storage Destination Banner
   // -------------------------------------------------------------
   Widget _buildStatusBanner(BuildContext context, TransferEngine engine) {
+    final paused = engine.isReceivingPaused;
+    // Android always receives into Downloads/QuickShare, so there is no folder to change here.
+    final fixedFolder = AndroidDownloads.supported;
+
+    final statusIcon = Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: paused
+            ? Colors.orange.withValues(alpha: 0.15)
+            : AppColors.primaryAccent.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: paused
+            ? Colors.orange.withValues(alpha: 0.4)
+            : AppColors.primaryAccent.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Icon(
+        paused ? Icons.pause_circle_outline : Icons.cloud_download_rounded,
+        color: paused ? Colors.orange : AppColors.primaryAccent,
+        size: 26,
+      ),
+    );
+
+    Widget details({required bool compact}) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                Text(
+                  paused ? 'Background Receiving: PAUSED' : 'Background Receiving: ACTIVE',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: paused ? Colors.orange : AppColors.primaryText,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.cardBg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.subtleBorder),
+                  ),
+                  child: Text(
+                    '${engine.pairedDevices.length} Trusted Devices',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primaryAccent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Target Destination: ${fixedFolder ? AndroidDownloads.folder : engine.downloadDirectory}',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11.5,
+                color: AppColors.secondaryText,
+              ),
+              maxLines: compact ? 2 : 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        );
+
+    Widget pauseButton({required bool short}) => OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: paused ? AppColors.primaryAccent : Colors.orange,
+            side: BorderSide(color: paused ? AppColors.primaryAccent : Colors.orange),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          ),
+          icon: Icon(paused ? Icons.play_arrow_rounded : Icons.pause_rounded, size: 16),
+          label: Text(
+            paused ? 'Resume' : (short ? 'Pause' : 'Pause Receiving'),
+            style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5),
+          ),
+          onPressed: () => engine.togglePauseReceiving(),
+        );
+
+    final changePathButton = ElevatedButton.icon(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.primaryAccent,
+        foregroundColor: AppColors.nearBlack,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      ),
+      icon: const Icon(Icons.edit_location_alt_rounded, size: 16),
+      label: const Text('Change Path', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.bold, fontSize: 11.5)),
+      onPressed: () => _editDownloadPath(context, engine),
+    );
+
     return HoverCard(
       borderRadius: BorderRadius.circular(18),
       padding: const EdgeInsets.all(20),
@@ -841,119 +979,54 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
       color: AppColors.charcoalSurface,
       borderColor: AppColors.subtleBorder,
       hoverBorderColor: AppColors.primaryAccent.withValues(alpha: 0.6),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: engine.isReceivingPaused
-                      ? Colors.orange.withValues(alpha: 0.15)
-                      : AppColors.primaryAccent.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: engine.isReceivingPaused
-                      ? Colors.orange.withValues(alpha: 0.4)
-                      : AppColors.primaryAccent.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: Icon(
-                  engine.isReceivingPaused ? Icons.pause_circle_outline : Icons.cloud_download_rounded,
-                  color: engine.isReceivingPaused ? Colors.orange : AppColors.primaryAccent,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Phones: buttons go full width under the status instead of squeezing it.
+          if (constraints.maxWidth < 520) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        Text(
-                          engine.isReceivingPaused ? 'Background Receiving: PAUSED' : 'Background Receiving: ACTIVE',
-                          style: TextStyle(
-                            fontFamily: 'Poppins',
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: engine.isReceivingPaused ? Colors.orange : AppColors.primaryText,
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.cardBg,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: AppColors.subtleBorder),
-                          ),
-                          child: Text(
-                            '${engine.pairedDevices.length} Trusted Devices',
-                            style: TextStyle(
-                              fontFamily: 'Poppins',
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primaryAccent,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Target Destination: ${engine.downloadDirectory}',
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11.5,
-                        color: AppColors.secondaryText,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    statusIcon,
+                    const SizedBox(width: 14),
+                    Expanded(child: details(compact: true)),
                   ],
                 ),
-              ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(child: pauseButton(short: !fixedFolder)),
+                    if (!fixedFolder) ...[
+                      const SizedBox(width: 10),
+                      Expanded(child: changePathButton),
+                    ],
+                  ],
+                ),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              statusIcon,
+              const SizedBox(width: 16),
+              Expanded(child: details(compact: false)),
               const SizedBox(width: 8),
               Flexible(
                 child: Wrap(
-                alignment: WrapAlignment.end,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: engine.isReceivingPaused ? AppColors.primaryAccent : Colors.orange,
-                      side: BorderSide(color: engine.isReceivingPaused ? AppColors.primaryAccent : Colors.orange),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    ),
-                    icon: Icon(engine.isReceivingPaused ? Icons.play_arrow_rounded : Icons.pause_rounded, size: 16),
-                    label: Text(
-                      engine.isReceivingPaused ? 'Resume' : 'Pause Receiving',
-                      style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5),
-                    ),
-                    onPressed: () => engine.togglePauseReceiving(),
-                  ),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryAccent,
-                      foregroundColor: AppColors.nearBlack,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    ),
-                    icon: const Icon(Icons.edit_location_alt_rounded, size: 16),
-                    label: const Text('Change Path', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.bold, fontSize: 11.5)),
-                    onPressed: () => _editDownloadPath(context, engine),
-                  ),
-                ],
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    pauseButton(short: false),
+                    if (!fixedFolder) changePathButton,
+                  ],
                 ),
               ),
             ],
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -961,67 +1034,74 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
   // -------------------------------------------------------------
   // Filter Chips
   // -------------------------------------------------------------
-  Widget _buildFilterChips(TransferEngine engine) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        FilterChip(
-          label: Text('All (${engine.receivedItems.length})', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5)),
-          selected: _selectedFilter == null,
-          selectedColor: AppColors.primaryAccent,
-          backgroundColor: AppColors.cardBg,
-          checkmarkColor: AppColors.nearBlack,
-          labelStyle: TextStyle(
-            fontFamily: 'Poppins',
-            color: _selectedFilter == null ? AppColors.nearBlack : AppColors.secondaryText,
-            fontWeight: _selectedFilter == null ? FontWeight.bold : FontWeight.normal,
-          ),
-          onSelected: (_) => setState(() => _selectedFilter = null),
+  Widget _buildFilterChips(TransferEngine engine, {required bool compact}) {
+    final chips = <Widget>[
+      FilterChip(
+        label: Text('All (${engine.receivedItems.length})', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5)),
+        selected: _selectedFilter == null,
+        selectedColor: AppColors.primaryAccent,
+        backgroundColor: AppColors.cardBg,
+        checkmarkColor: AppColors.nearBlack,
+        labelStyle: TextStyle(
+          fontFamily: 'Poppins',
+          color: _selectedFilter == null ? AppColors.nearBlack : AppColors.secondaryText,
+          fontWeight: _selectedFilter == null ? FontWeight.bold : FontWeight.normal,
         ),
-        FilterChip(
-          avatar: const Icon(Icons.picture_as_pdf, size: 15, color: Color(0xFFEF4444)),
-          label: Text('PDFs (${engine.receivedItems.where((i) => i.fileType == ReceivedFileType.pdf).length})', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5)),
-          selected: _selectedFilter == ReceivedFileType.pdf,
-          selectedColor: AppColors.primaryAccent,
-          backgroundColor: AppColors.cardBg,
-          checkmarkColor: AppColors.nearBlack,
-          labelStyle: TextStyle(
-            fontFamily: 'Poppins',
-            color: _selectedFilter == ReceivedFileType.pdf ? AppColors.nearBlack : AppColors.secondaryText,
-            fontWeight: _selectedFilter == ReceivedFileType.pdf ? FontWeight.bold : FontWeight.normal,
-          ),
-          onSelected: (_) => setState(() => _selectedFilter = ReceivedFileType.pdf),
+        onSelected: (_) => setState(() => _selectedFilter = null),
+      ),
+      FilterChip(
+        avatar: const Icon(Icons.picture_as_pdf, size: 15, color: Color(0xFFEF4444)),
+        label: Text('PDFs (${engine.receivedItems.where((i) => i.fileType == ReceivedFileType.pdf).length})', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5)),
+        selected: _selectedFilter == ReceivedFileType.pdf,
+        selectedColor: AppColors.primaryAccent,
+        backgroundColor: AppColors.cardBg,
+        checkmarkColor: AppColors.nearBlack,
+        labelStyle: TextStyle(
+          fontFamily: 'Poppins',
+          color: _selectedFilter == ReceivedFileType.pdf ? AppColors.nearBlack : AppColors.secondaryText,
+          fontWeight: _selectedFilter == ReceivedFileType.pdf ? FontWeight.bold : FontWeight.normal,
         ),
-        FilterChip(
-          avatar: Icon(Icons.image, size: 15, color: AppColors.primaryAccent),
-          label: Text('Images (${engine.receivedItems.where((i) => i.fileType == ReceivedFileType.image).length})', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5)),
-          selected: _selectedFilter == ReceivedFileType.image,
-          selectedColor: AppColors.primaryAccent,
-          backgroundColor: AppColors.cardBg,
-          checkmarkColor: AppColors.nearBlack,
-          labelStyle: TextStyle(
-            fontFamily: 'Poppins',
-            color: _selectedFilter == ReceivedFileType.image ? AppColors.nearBlack : AppColors.secondaryText,
-            fontWeight: _selectedFilter == ReceivedFileType.image ? FontWeight.bold : FontWeight.normal,
-          ),
-          onSelected: (_) => setState(() => _selectedFilter = ReceivedFileType.image),
+        onSelected: (_) => setState(() => _selectedFilter = ReceivedFileType.pdf),
+      ),
+      FilterChip(
+        avatar: Icon(Icons.image, size: 15, color: AppColors.primaryAccent),
+        label: Text('Images (${engine.receivedItems.where((i) => i.fileType == ReceivedFileType.image).length})', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5)),
+        selected: _selectedFilter == ReceivedFileType.image,
+        selectedColor: AppColors.primaryAccent,
+        backgroundColor: AppColors.cardBg,
+        checkmarkColor: AppColors.nearBlack,
+        labelStyle: TextStyle(
+          fontFamily: 'Poppins',
+          color: _selectedFilter == ReceivedFileType.image ? AppColors.nearBlack : AppColors.secondaryText,
+          fontWeight: _selectedFilter == ReceivedFileType.image ? FontWeight.bold : FontWeight.normal,
         ),
-        FilterChip(
-          avatar: Icon(Icons.text_snippet, size: 15, color: AppColors.primaryAccent),
-          label: Text('Text (${engine.receivedItems.where((i) => i.fileType == ReceivedFileType.text).length})', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5)),
-          selected: _selectedFilter == ReceivedFileType.text,
-          selectedColor: AppColors.primaryAccent,
-          backgroundColor: AppColors.cardBg,
-          checkmarkColor: AppColors.nearBlack,
-          labelStyle: TextStyle(
-            fontFamily: 'Poppins',
-            color: _selectedFilter == ReceivedFileType.text ? AppColors.nearBlack : AppColors.secondaryText,
-            fontWeight: _selectedFilter == ReceivedFileType.text ? FontWeight.bold : FontWeight.normal,
-          ),
-          onSelected: (_) => setState(() => _selectedFilter = ReceivedFileType.text),
+        onSelected: (_) => setState(() => _selectedFilter = ReceivedFileType.image),
+      ),
+      FilterChip(
+        avatar: Icon(Icons.text_snippet, size: 15, color: AppColors.primaryAccent),
+        label: Text('Text (${engine.receivedItems.where((i) => i.fileType == ReceivedFileType.text).length})', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5)),
+        selected: _selectedFilter == ReceivedFileType.text,
+        selectedColor: AppColors.primaryAccent,
+        backgroundColor: AppColors.cardBg,
+        checkmarkColor: AppColors.nearBlack,
+        labelStyle: TextStyle(
+          fontFamily: 'Poppins',
+          color: _selectedFilter == ReceivedFileType.text ? AppColors.nearBlack : AppColors.secondaryText,
+          fontWeight: _selectedFilter == ReceivedFileType.text ? FontWeight.bold : FontWeight.normal,
         ),
-      ],
+        onSelected: (_) => setState(() => _selectedFilter = ReceivedFileType.text),
+      ),
+    ];
+    if (!compact) return Wrap(spacing: 8, runSpacing: 8, children: chips);
+    // Phones: one swipeable row instead of a ragged second line.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.none,
+      child: Row(
+        children: [
+          for (final chip in chips) Padding(padding: const EdgeInsets.only(right: 8), child: chip),
+        ],
+      ),
     );
   }
 
@@ -1093,7 +1173,74 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
   // -------------------------------------------------------------
   Widget _buildReceivedItemCard(BuildContext context, ReceivedItemModel item, TransferEngine engine) {
     final fileColor = _getFileColor(item.fileType);
-    final fileIcon = _getFileIcon(item.fileType);
+    final hasText = item.fileType == ReceivedFileType.text && item.textContent != null;
+
+    final avatar = Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: fileColor.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: fileColor.withValues(alpha: 0.3)),
+      ),
+      child: Icon(_getFileIcon(item.fileType), color: fileColor, size: 22),
+    );
+
+    Widget deleteButton({required bool compact}) => IconButton(
+          icon: const Icon(Icons.delete_outline, color: Color(0xFFEF4444), size: 18),
+          tooltip: 'Delete Record',
+          visualDensity: compact ? VisualDensity.compact : null,
+          onPressed: () => engine.removeReceivedItem(item.id),
+        );
+
+    // Open, Download / Save to device (and Copy for text). On phones they share one full-width
+    // row, so they are taller and use short labels.
+    List<Widget> actions({required bool compact}) {
+      final outlined = OutlinedButton.styleFrom(
+        foregroundColor: compact ? AppColors.primaryText : AppColors.secondaryText,
+        side: BorderSide(color: AppColors.subtleBorder),
+        padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 10, vertical: compact ? 12 : 6),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(compact ? 10 : 8)),
+      );
+      final labelSize = compact ? 12.0 : 11.0;
+      return [
+        if (hasText)
+          OutlinedButton.icon(
+            style: outlined,
+            icon: const Icon(Icons.copy, size: 14),
+            label: Text('Copy', maxLines: 1, style: TextStyle(fontFamily: 'Poppins', fontSize: labelSize)),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: item.textContent!));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Copied text to clipboard!')),
+              );
+            },
+          ),
+        OutlinedButton.icon(
+          style: outlined,
+          icon: const Icon(Icons.visibility, size: 14),
+          label: Text(compact ? 'Open' : 'Open / See', maxLines: 1, style: TextStyle(fontFamily: 'Poppins', fontSize: labelSize)),
+          onPressed: () => _previewItem(context, item, engine),
+        ),
+        // Prominent Download / Save to device button
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primaryAccent,
+            foregroundColor: AppColors.nearBlack,
+            padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 12, vertical: compact ? 12 : 8),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(compact ? 10 : 8)),
+            elevation: 0,
+          ),
+          icon: const Icon(Icons.download_rounded, size: 15),
+          label: Text(
+            'Download',
+            maxLines: 1,
+            style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700, fontSize: compact ? 12 : 11.5),
+          ),
+          onPressed: () => _downloadOrSaveItem(context, item, engine),
+        ),
+      ];
+    }
 
     return HoverCard(
       borderRadius: BorderRadius.circular(16),
@@ -1103,146 +1250,141 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
       color: AppColors.cardBg,
       borderColor: AppColors.subtleBorder,
       hoverBorderColor: fileColor.withValues(alpha: 0.6),
-      child: Row(
-        children: [
-          // File Icon Avatar
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: fileColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: fileColor.withValues(alpha: 0.3)),
-            ),
-            child: Icon(fileIcon, color: fileColor, size: 22),
-          ),
-          const SizedBox(width: 14),
-
-          // File Information (Name, Sender, Size, Date, Path)
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Phones: details get the full width, actions sit in their own row underneath.
+          if (constraints.maxWidth < 640) {
+            final buttons = actions(compact: true);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        item.fileName,
-                        style: TextStyle(
-                          fontFamily: 'Poppins',
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13.5,
-                          color: AppColors.primaryText,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: AppColors.charcoalSurface,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: AppColors.subtleBorder),
-                      ),
-                      child: Text(
-                        'SAVED',
-                        style: TextStyle(
-                          fontFamily: 'Poppins',
-                          color: AppColors.primaryAccent,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
+                    avatar,
+                    const SizedBox(width: 12),
+                    Expanded(child: _buildItemDetails(item, compact: true)),
+                    deleteButton(compact: true),
                   ],
                 ),
-                const SizedBox(height: 3),
-                if (item.fileType == ReceivedFileType.text && item.textContent != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 2),
-                    child: Text(
-                      '"${item.textContent}"',
-                      style: TextStyle(fontFamily: 'Poppins', fontSize: 11.5, fontStyle: FontStyle.italic, color: AppColors.secondaryText),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                Text(
-                  'From: ${item.senderDeviceName} • ${FormatUtils.formatBytes(item.fileSizeBytes)} • ${item.receivedAt.hour.toString().padLeft(2, '0')}:${item.receivedAt.minute.toString().padLeft(2, '0')}',
-                  style: TextStyle(fontFamily: 'Poppins', fontSize: 11.5, color: AppColors.secondaryText),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Path: ${_displayReceivedPath(item)}',
-                  style: TextStyle(fontFamily: 'monospace', fontSize: 10.5, color: AppColors.secondaryText),
-                  overflow: TextOverflow.ellipsis,
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    for (var i = 0; i < buttons.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      Expanded(child: buttons[i]),
+                    ],
+                  ],
                 ),
               ],
+            );
+          }
+          return Row(
+            children: [
+              avatar,
+              const SizedBox(width: 14),
+              Expanded(child: _buildItemDetails(item, compact: false)),
+              const SizedBox(width: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [...actions(compact: false), deleteButton(compact: false)],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Name, sender, size, time and where the file is saved.
+  Widget _buildItemDetails(ReceivedItemModel item, {required bool compact}) {
+    final secondary = TextStyle(fontFamily: 'Poppins', fontSize: compact ? 12 : 11.5, color: AppColors.secondaryText);
+    final time = '${item.receivedAt.hour.toString().padLeft(2, '0')}:${item.receivedAt.minute.toString().padLeft(2, '0')}';
+    final name = Text(
+      item.fileName,
+      style: TextStyle(
+        fontFamily: 'Poppins',
+        fontWeight: FontWeight.bold,
+        fontSize: compact ? 14 : 13.5,
+        color: AppColors.primaryText,
+      ),
+      maxLines: compact ? 2 : 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    final savedBadge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppColors.charcoalSurface,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppColors.subtleBorder),
+      ),
+      child: Text(
+        'SAVED',
+        style: TextStyle(
+          fontFamily: 'Poppins',
+          color: AppColors.primaryAccent,
+          fontSize: 9.5,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (compact)
+          name
+        else
+          Row(
+            children: [
+              Expanded(child: name),
+              const SizedBox(width: 8),
+              savedBadge,
+            ],
+          ),
+        const SizedBox(height: 3),
+        if (item.fileType == ReceivedFileType.text && item.textContent != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              '"${item.textContent}"',
+              style: TextStyle(fontFamily: 'Poppins', fontSize: 11.5, fontStyle: FontStyle.italic, color: AppColors.secondaryText),
+              maxLines: compact ? 2 : 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          const SizedBox(width: 10),
-
-          // Action Buttons: Open, Download / Save to device, Delete
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
+        if (compact) ...[
+          Text('From ${item.senderDeviceName}', style: secondary, maxLines: 1, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 6),
+          Row(
             children: [
-              if (item.fileType == ReceivedFileType.text && item.textContent != null)
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.secondaryText,
-                    side: BorderSide(color: AppColors.subtleBorder),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  icon: const Icon(Icons.copy, size: 14),
-                  label: const Text('Copy', style: TextStyle(fontFamily: 'Poppins', fontSize: 11)),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: item.textContent!));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Copied text to clipboard!')),
-                    );
-                  },
+              savedBadge,
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  '${FormatUtils.formatBytes(item.fileSizeBytes)} • $time',
+                  style: secondary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.secondaryText,
-                  side: BorderSide(color: AppColors.subtleBorder),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-                icon: const Icon(Icons.visibility, size: 14),
-                label: const Text('Open / See', style: TextStyle(fontFamily: 'Poppins', fontSize: 11)),
-                onPressed: () => _previewItem(context, item, engine),
-              ),
-              // Prominent Download / Save to device button
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryAccent,
-                  foregroundColor: AppColors.nearBlack,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  elevation: 0,
-                ),
-                icon: const Icon(Icons.download_rounded, size: 15),
-                label: const Text(
-                  'Download',
-                  style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700, fontSize: 11.5),
-                ),
-                onPressed: () => _downloadOrSaveItem(context, item, engine),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, color: Color(0xFFEF4444), size: 18),
-                tooltip: 'Delete Record',
-                onPressed: () => engine.removeReceivedItem(item.id),
               ),
             ],
           ),
-        ],
-      ),
+        ] else
+          Text(
+            'From: ${item.senderDeviceName} • ${FormatUtils.formatBytes(item.fileSizeBytes)} • $time',
+            style: secondary,
+          ),
+        SizedBox(height: compact ? 6 : 2),
+        Text(
+          'Path: ${_displayReceivedPath(item)}',
+          style: TextStyle(fontFamily: 'monospace', fontSize: 10.5, color: AppColors.secondaryText),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 }

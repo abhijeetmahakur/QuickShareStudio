@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:quickshare/data/models/device_model.dart';
@@ -487,6 +487,20 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       engine.receivedItems.clear();
 
+      const system = MethodChannel('quickshare/system');
+      const downloads = MethodChannel('quickshare/downloads');
+      final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(system, (call) async => call.method == 'sdkInt' ? 34 : null);
+      messenger.setMockMethodCallHandler(downloads, (call) async => switch (call.method) {
+            'begin' => 'content://media/external/downloads/7',
+            'finish' => 'Presentation_Slides.pdf',
+            _ => null,
+          });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(system, null);
+        messenger.setMockMethodCallHandler(downloads, null);
+      });
+
       final sampleBytes = Uint8List.fromList([1, 2, 3, 4, 5]);
       engine.receiveIncomingTransfer(
         senderDeviceName: 'MacBook Air (macOS)',
@@ -520,6 +534,8 @@ void main() {
       // Verify item download state is marked true
       final item = engine.receivedItems.firstWhere((i) => i.fileName == 'Presentation_Slides.pdf');
       expect(item.isDownloaded, isTrue);
+      expect(item.savedToPath, 'content://media/external/downloads/7');
+      expect(find.text('Saved to Downloads/QuickShare/Presentation_Slides.pdf'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
     });

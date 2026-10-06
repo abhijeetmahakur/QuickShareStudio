@@ -7,12 +7,14 @@ import io.flutter.embedding.engine.FlutterEngine
 class MainActivity : FlutterActivity() {
     private var bluetooth: BluetoothBridge? = null
     private var system: SystemBridge? = null
+    private var downloads: DownloadsBridge? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
         bluetooth = BluetoothBridge(applicationContext, messenger).also { it.activity = this }
         system = SystemBridge(applicationContext, messenger).also { it.activity = this }
+        downloads = DownloadsBridge(applicationContext, messenger)
     }
 
     @Deprecated("Needed for the Bluetooth enable prompt result")
@@ -26,6 +28,8 @@ class MainActivity : FlutterActivity() {
         bluetooth?.dispose()
         bluetooth = null
         system = null
+        downloads?.dispose()
+        downloads = null
         super.onDestroy()
     }
 }

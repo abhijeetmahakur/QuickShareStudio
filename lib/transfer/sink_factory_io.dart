@@ -2,82 +2,63 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/services.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../core/services/android_downloads.dart';
 import 'file_names.dart';
 import 'protocol/transfer_protocol.dart';
 import 'sink_factory.dart';
 
-const _androidSystemChannel = MethodChannel('quickshare/system');
-
-/// Streams a verified inbound file into Android's public Downloads collection.
+/// Streams a verified inbound file into the phone's public Downloads/QuickShare folder.
 class AndroidDownloadsSink implements IncomingFileSink {
-  AndroidDownloadsSink._(this._uri, this._name, this._size, this._keepBytes);
+  AndroidDownloadsSink._(this._handle, this._size, this._keepBytes);
 
-  final String _uri;
-  final String _name;
+  final String _handle;
   final int _size;
   final BytesBuilder? _keepBytes;
+  // Chunks arrive in 16 KiB pieces; batching them keeps platform-channel calls rare.
+  final _pending = BytesBuilder(copy: true);
   bool _closed = false;
 
-  static Future<AndroidDownloadsSink> open(String name, int size) async {
-    final result = await _androidSystemChannel.invokeMapMethod<String, String>(
-      'beginDownload',
-      {'name': name},
-    );
-    final uri = result?['uri'];
-    final savedName = result?['name'];
-    if (uri == null || uri.isEmpty || savedName == null || savedName.isEmpty) {
-      throw FileSystemException('Android did not create a Downloads file.', name);
-    }
-    return AndroidDownloadsSink._(
-      uri,
-      savedName,
-      size,
-      size <= keepInMemoryLimit ? BytesBuilder(copy: true) : null,
-    );
-  }
+  static Future<AndroidDownloadsSink> open(String name, int size) async => AndroidDownloadsSink._(
+        await AndroidDownloads.begin(name),
+        size,
+        size <= keepInMemoryLimit ? BytesBuilder(copy: true) : null,
+      );
 
   @override
   Future<void> add(Uint8List data) async {
     if (_closed) throw StateError('Cannot write to a closed Downloads file.');
-    await _androidSystemChannel.invokeMethod<void>(
-      'writeDownloadChunk',
-      {'uri': _uri, 'data': data},
-    );
+    _pending.add(data);
     _keepBytes?.add(data);
+    if (_pending.length >= AndroidDownloads.blockSize) await _flush();
+  }
+
+  Future<void> _flush() async {
+    if (_pending.isNotEmpty) await AndroidDownloads.write(_handle, _pending.takeBytes());
   }
 
   @override
   Future<ReceivedFile> commit(String sha256) async {
     if (_closed) throw StateError('Cannot commit a closed Downloads file.');
-    final savedUri = await _androidSystemChannel.invokeMethod<String>(
-      'finishDownload',
-      {'uri': _uri},
-    );
-    if (savedUri == null || savedUri.isEmpty) {
-      throw FileSystemException('Android could not finish saving to Downloads.', _name);
-    }
     _closed = true;
-    return ReceivedFile(
-      name: _name,
-      size: _size,
-      sha256: sha256,
-      path: savedUri,
-      bytes: _keepBytes?.takeBytes(),
-    );
+    try {
+      await _flush();
+      final name = await AndroidDownloads.finish(_handle);
+      return ReceivedFile(name: name, size: _size, sha256: sha256, path: _handle, bytes: _keepBytes?.takeBytes());
+    } catch (_) {
+      // The protocol does not discard a sink whose commit failed.
+      await AndroidDownloads.discard(_handle).catchError((_) {});
+      rethrow;
+    }
   }
 
   @override
   Future<void> discard() async {
     if (_closed) return;
     _closed = true;
-    await _androidSystemChannel.invokeMethod<void>(
-      'discardDownload',
-      {'uri': _uri},
-    );
+    await AndroidDownloads.discard(_handle);
   }
 }
 
@@ -133,26 +114,24 @@ class FileSystemSink implements IncomingFileSink {
 
 Future<IncomingFileSink> openSink({required String fileName, required int size, required String directory}) async {
   if (Platform.isAndroid) {
-    final sdkInt = await _androidSystemChannel.invokeMethod<int>('sdkInt');
-    if ((sdkInt ?? 0) >= 29) {
-      return AndroidDownloadsSink.open(fileName, size);
+    // Into the public Downloads/QuickShare folder, where the Files app shows it.
+    try {
+      if (await AndroidDownloads.ensurePermission()) return await AndroidDownloadsSink.open(fileName, size);
+    } catch (e) {
+      debugPrint('[QuickShare] Could not save "$fileName" into Downloads, using app storage: $e');
     }
-
-    final permission = await Permission.storage.request();
-    if (!permission.isGranted) {
-      throw FileSystemException(
-        'Storage permission is required to save received files to Downloads.',
-        directory,
-      );
-    }
+    return _openAppStorageSink(fileName, size);
   }
-
   try {
     return await FileSystemSink.open(Directory(directory), fileName, size);
   } on FileSystemException {
-    if (Platform.isAndroid) rethrow;
-    final base = await getApplicationDocumentsDirectory();
-    final fallback = Directory('${base.path}${Platform.pathSeparator}QuickShare');
-    return FileSystemSink.open(fallback, fileName, size);
+    return _openAppStorageSink(fileName, size);
   }
+}
+
+/// The app's own folder: always writable, but on Android only visible inside QuickShare.
+Future<IncomingFileSink> _openAppStorageSink(String fileName, int size) async {
+  final base = Platform.isAndroid ? await getExternalStorageDirectory() : null;
+  final dir = Directory('${(base ?? await getApplicationDocumentsDirectory()).path}${Platform.pathSeparator}QuickShare');
+  return FileSystemSink.open(dir, fileName, size);
 }

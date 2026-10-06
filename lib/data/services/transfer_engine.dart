@@ -1098,9 +1098,11 @@ class TransferEngine extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<String?> downloadOrSaveReceivedItem(ReceivedItemModel item, {String? targetDirectory}) async {
+  /// Records that [item] was saved: at [savedPath] when the caller knows it (e.g. a content://
+  /// URI on Android), otherwise under [targetDirectory] (default: the download directory).
+  Future<String?> downloadOrSaveReceivedItem(ReceivedItemModel item, {String? targetDirectory, String? savedPath}) async {
     final destinationDir = targetDirectory ?? downloadDirectory;
-    final targetPath = FileUtils.joinPath(destinationDir, item.fileName);
+    final targetPath = savedPath ?? FileUtils.joinPath(destinationDir, item.fileName);
     try {
       final bytes = item.bytes.isNotEmpty ? item.bytes : (fileDataStore[item.fileName] ?? fileDataStore[item.sha256]);
       if (bytes != null && bytes.isNotEmpty) {
