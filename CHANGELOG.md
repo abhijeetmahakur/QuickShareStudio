@@ -2,6 +2,12 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.10] - 2026-10-06
+
+### Fixed
+- Prevent the Windows release build from failing on current MSVC because of the deprecated coroutine header used by `permission_handler_windows`.
+- Universal Clipboard no longer appears selected on the Dashboard before it is opened.
+
 ## [2.0.9] - 2026-10-06
 
 ### Fixed
