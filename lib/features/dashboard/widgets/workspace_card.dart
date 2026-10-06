@@ -7,14 +7,18 @@ class WorkspaceCard extends StatefulWidget {
   final String title;
   final String subtitle;
   final IconData icon;
+  final bool isSelected;
   final VoidCallback? onTap;
+  final VoidCallback? onDoubleTap;
 
   const WorkspaceCard({
     super.key,
     required this.title,
     required this.subtitle,
     required this.icon,
+    this.isSelected = false,
     this.onTap,
+    this.onDoubleTap,
   });
 
   @override
@@ -26,9 +30,8 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
 
   @override
   Widget build(BuildContext context) {
-    // Workspace cards are actions, not active-page indicators. Lime emphasis
-    // is reserved for pointer hover; the sidebar tracks the selected page.
-    final isHighlighted = _isHovered;
+    // A card is highlighted when explicitly selected or currently hovered.
+    final isHighlighted = widget.isSelected || _isHovered;
 
     final cardContent = MouseRegion(
       cursor: widget.onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
@@ -57,6 +60,12 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
                 blurRadius: 16.0,
                 spreadRadius: 0.5,
                 offset: const Offset(0, 4),
+              )
+            else if (widget.isSelected)
+              BoxShadow(
+                color: AppColors.primaryAccent.withValues(alpha: 0.12),
+                blurRadius: 12.0,
+                offset: const Offset(0, 2),
               ),
             BoxShadow(
               color: Colors.black.withValues(alpha: _isHovered ? 0.35 : 0.2),
@@ -75,7 +84,11 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
               width: 34.0,
               height: 34.0,
               decoration: BoxDecoration(
-                color: _isHovered ? AppColors.subtleBorderLight : AppColors.surfaceElevated,
+                color: _isHovered
+                    ? AppColors.subtleBorderLight
+                    : (widget.isSelected
+                        ? AppColors.surfaceElevated
+                        : AppColors.surfaceElevated),
                 borderRadius: BorderRadius.circular(8.0),
                 border: Border.all(
                   color: isHighlighted
@@ -125,9 +138,10 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
       ),
     );
 
-    if (widget.onTap != null) {
+    if (widget.onTap != null || widget.onDoubleTap != null) {
       return InkWell(
         onTap: widget.onTap,
+        onDoubleTap: widget.onDoubleTap,
         borderRadius: BorderRadius.circular(16.0),
         splashColor: AppColors.primaryAccent.withValues(alpha: 0.1),
         highlightColor: Colors.transparent,

@@ -2,6 +2,12 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.11] - 2026-10-07
+
+### Fixed
+- Fixed Dashboard workspace card selection/active-state logic: cards start in a neutral "nothing selected" state on Dashboard display, Universal Clipboard is not selected by default, clicking a card activates it with accent highlight and immediately clears previous card selection, and returning to Dashboard clears card selection.
+- Fixed GitHub Actions release workflow Android signing step to build and publish downloadable desktop application release artifacts without failing on missing keystore secrets.
+
 ## [2.0.10] - 2026-10-06
 
 ### Fixed

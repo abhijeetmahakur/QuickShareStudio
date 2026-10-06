@@ -38,6 +38,11 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   late int _selectedIndex;
 
+  /// Currently active workspace card index on the Dashboard.
+  /// Initial state represents "nothing selected" when the Dashboard is displayed,
+  /// ensuring Universal Clipboard (or any other card) is not selected by default.
+  int? _activeCardIndex;
+
   /// Sections opened so far. They stay mounted (hidden) so switching sections does not
   /// throw away work such as PDF Studio pages or PDF Tools selections.
   final Set<int> _visitedSections = {};
@@ -50,11 +55,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex;
+    _activeCardIndex = null;
   }
 
   void _onNavigate(int index) {
     setState(() {
       _selectedIndex = index;
+      if (index == 0) {
+        // Navigating back to the Dashboard clears any active card selection
+        _activeCardIndex = null;
+      }
+    });
+  }
+
+  void _onCardTap(int targetIndex) {
+    setState(() {
+      if (_activeCardIndex == targetIndex) {
+        // Tapping the already-active card opens/navigates into that section
+        _onNavigate(targetIndex);
+      } else {
+        // First tap activates this card and immediately deselects any previously active card
+        _activeCardIndex = targetIndex;
+      }
     });
   }
 
@@ -326,11 +348,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 itemCount: _workspaceItems.length,
                 itemBuilder: (context, index) {
                   final item = _workspaceItems[index];
+                  final isCardSelected = _activeCardIndex != null &&
+                      item.targetIndex == _activeCardIndex;
                   return WorkspaceCard(
                     title: item.title,
                     subtitle: item.subtitle,
                     icon: item.icon,
-                    onTap: item.targetIndex != null ? () => _onNavigate(item.targetIndex!) : null,
+                    isSelected: isCardSelected,
+                    onTap: item.targetIndex != null
+                        ? () => _onCardTap(item.targetIndex!)
+                        : null,
                   );
                 },
               );

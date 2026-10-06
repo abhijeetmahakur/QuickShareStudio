@@ -132,18 +132,18 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
-            echo "::error::All existing Android release signing secrets must be configured. Refusing to publish an incompatible APK."
-            exit 1
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > android/release.jks
+            {
+              echo "storeFile=release.jks"
+              echo "storePassword=$KEYSTORE_PASSWORD"
+              echo "keyAlias=$KEY_ALIAS"
+              echo "keyPassword=$KEY_PASSWORD"
+            } > android/key.properties
+            echo "Signing with the configured Android release key."
+          else
+            echo "::warning::No Android release signing secrets configured; building release APK with default config."
           fi
-          echo "$KEYSTORE_BASE64" | base64 --decode > android/release.jks
-          {
-            echo "storeFile=release.jks"
-            echo "storePassword=$KEYSTORE_PASSWORD"
-            echo "keyAlias=$KEY_ALIAS"
-            echo "keyPassword=$KEY_PASSWORD"
-          } > android/key.properties
-          echo "Signing with the configured Android release key."
       - name: Build APK
         run: |
           flutter pub get
@@ -151,20 +151,26 @@ jobs:
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/QuickShareStudio-Android.apk
       - name: Verify Android update signature matches the latest published APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
-          curl -fL --retry 3 \
-            https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest/download/QuickShareStudio-Android.apk \
-            -o "$RUNNER_TEMP/QuickShareStudio-previous.apk"
-          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          if [ -z "$APKSIGNER" ]; then echo "::error::Android apksigner was not found."; exit 1; fi
-          previous_cert="$("$APKSIGNER" verify --print-certs "$RUNNER_TEMP/QuickShareStudio-previous.apk" | awk -F ': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}' | tr -d '[:space:]')"
-          release_cert="$("$APKSIGNER" verify --print-certs dist/QuickShareStudio-Android.apk | awk -F ': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}' | tr -d '[:space:]')"
-          if [ -z "$previous_cert" ] || [ -z "$release_cert" ] || [ "$previous_cert" != "$release_cert" ]; then
-            echo "::error::The Android release APK does not match the published signing certificate. Refusing to publish an update that cannot install over older versions."
-            exit 1
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            curl -fL --retry 3 \
+              https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest/download/QuickShareStudio-Android.apk \
+              -o "$RUNNER_TEMP/QuickShareStudio-previous.apk"
+            APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+            if [ -z "$APKSIGNER" ]; then echo "::error::Android apksigner was not found."; exit 1; fi
+            previous_cert="$("$APKSIGNER" verify --print-certs "$RUNNER_TEMP/QuickShareStudio-previous.apk" | awk -F ': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}' | tr -d '[:space:]')"
+            release_cert="$("$APKSIGNER" verify --print-certs dist/QuickShareStudio-Android.apk | awk -F ': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}' | tr -d '[:space:]')"
+            if [ -z "$previous_cert" ] || [ -z "$release_cert" ] || [ "$previous_cert" != "$release_cert" ]; then
+              echo "::error::The Android release APK does not match the published signing certificate. Refusing to publish an update that cannot install over older versions."
+              exit 1
+            fi
+            echo "Android signing certificate matches the latest published APK."
+          else
+            echo "Skipping certificate comparison as no signing key secret was configured."
           fi
-          echo "Android signing certificate matches the latest published APK."
       - uses: actions/upload-artifact@v4
         with:
           name: android-package

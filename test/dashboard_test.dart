@@ -13,6 +13,8 @@ import 'package:quickshare/features/dashboard/widgets/dashboard_header.dart';
 import 'package:quickshare/features/dashboard/widgets/statistic_card.dart';
 import 'package:quickshare/features/dashboard/widgets/workspace_card.dart';
 import 'package:quickshare/features/dashboard/widgets/recent_exchanges_section.dart';
+import 'package:quickshare/features/clipboard/universal_clipboard_view.dart';
+import 'package:quickshare/features/security/security_settings_view.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -59,7 +61,7 @@ void main() {
   });
 
   group('B. WorkspaceCard Tests', () {
-    testWidgets('starts neutral and only highlights while hovered', (
+    testWidgets('starts neutral and highlights when isSelected or hovered', (
       tester,
     ) async {
       var tapped = false;
@@ -70,6 +72,7 @@ void main() {
               title: 'Universal Clipboard',
               subtitle: 'Smart sync text & images',
               icon: Icons.content_paste_rounded,
+              isSelected: false,
               onTap: () => tapped = true,
             ),
           ),
@@ -109,6 +112,40 @@ void main() {
       await tester.tap(find.text('Universal Clipboard'));
       await tester.pump();
       expect(tapped, isTrue);
+    });
+
+    testWidgets('highlights immediately when isSelected is true without hover', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          child: const Scaffold(
+            body: WorkspaceCard(
+              title: 'Universal Clipboard',
+              subtitle: 'Smart sync text & images',
+              icon: Icons.content_paste_rounded,
+              isSelected: true,
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.content_paste_rounded)).color,
+        AppColors.primaryAccent,
+      );
+      final cardDecoration = tester
+          .widget<AnimatedContainer>(
+            find.ancestor(
+              of: find.text('Universal Clipboard'),
+              matching: find.byType(AnimatedContainer),
+            ),
+          )
+          .decoration as BoxDecoration;
+      expect(
+        (cardDecoration.border! as Border).top.color,
+        AppColors.primaryAccent.withValues(alpha: 0.70),
+      );
     });
   });
 
@@ -328,7 +365,7 @@ void main() {
     );
 
     testWidgets(
-      'Tapping dashboard card opens corresponding workspace section',
+      'Dashboard cards start unselected, single-tap toggles active card, double-tap or second-tap opens section',
       (tester) async {
         tester.view.physicalSize = const Size(1280, 800);
         tester.view.devicePixelRatio = 1.0;
@@ -343,14 +380,64 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // Tap on Universal Clipboard card
-        final clipboardCard = find.text('Universal Clipboard');
-        expect(clipboardCard, findsWidgets);
-        await tester.tap(clipboardCard.last);
+        // Test 1: On load, Universal Clipboard card must NOT be selected/highlighted
+        final clipboardCards = find.widgetWithText(WorkspaceCard, 'Universal Clipboard');
+        expect(clipboardCards, findsOneWidget);
+        final initialClipboardCard = tester.widget<WorkspaceCard>(clipboardCards);
+        expect(initialClipboardCard.isSelected, isFalse);
+
+        // Test 2: Click Universal Clipboard -> becomes selected/highlighted
+        await tester.tap(clipboardCards);
+        await tester.pumpAndSettle();
+        final selectedClipboardCard = tester.widget<WorkspaceCard>(clipboardCards);
+        expect(selectedClipboardCard.isSelected, isTrue);
+
+        // Test 3: Click Transfer History -> Universal Clipboard highlight immediately disappears,
+        // Transfer History becomes highlighted
+        final historyCards = find.widgetWithText(WorkspaceCard, 'Transfer History');
+        expect(historyCards, findsOneWidget);
+        await tester.tap(historyCards);
         await tester.pumpAndSettle();
 
-        // UniversalClipboardView should now be visible
-        expect(find.text('Universal Smart Clipboard'), findsOneWidget);
+        final unselectedClipboardCard = tester.widget<WorkspaceCard>(clipboardCards);
+        final selectedHistoryCard = tester.widget<WorkspaceCard>(historyCards);
+        expect(unselectedClipboardCard.isSelected, isFalse);
+        expect(selectedHistoryCard.isSelected, isTrue);
+
+        // Test 4: Click Settings & Privacy -> only Settings & Privacy is active
+        final settingsCards = find.widgetWithText(WorkspaceCard, 'Settings & Privacy');
+        expect(settingsCards, findsOneWidget);
+        await tester.tap(settingsCards);
+        await tester.pumpAndSettle();
+
+        final unselectedHistoryCard = tester.widget<WorkspaceCard>(historyCards);
+        final selectedSettingsCard = tester.widget<WorkspaceCard>(settingsCards);
+        expect(unselectedHistoryCard.isSelected, isFalse);
+        expect(selectedSettingsCard.isSelected, isTrue);
+
+        // Test 5: Open section (by tapping already active card) and return to Dashboard ->
+        // Universal Clipboard is NOT automatically selected
+        await tester.tap(settingsCards);
+        await tester.pumpAndSettle();
+        // Now on SecuritySettingsView
+        expect(find.byType(SecuritySettingsView), findsOneWidget);
+
+        // Return to Dashboard via sidebar
+        final dashboardSidebarItem = find.text('Dashboard');
+        expect(dashboardSidebarItem, findsOneWidget);
+        await tester.tap(dashboardSidebarItem);
+        await tester.pumpAndSettle();
+
+        // Dashboard is back, nothing is active
+        final returnedClipboardCard = tester.widget<WorkspaceCard>(clipboardCards);
+        expect(returnedClipboardCard.isSelected, isFalse);
+
+        // Test 6: Double-tap / tapping twice opens section directly
+        await tester.tap(clipboardCards);
+        await tester.pump();
+        await tester.tap(clipboardCards);
+        await tester.pumpAndSettle();
+        expect(find.byType(UniversalClipboardView), findsOneWidget);
       },
     );
 
