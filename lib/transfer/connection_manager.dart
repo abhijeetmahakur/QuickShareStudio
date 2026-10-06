@@ -82,7 +82,7 @@ class _Tracked {
   StreamSubscription<TransferSnapshot>? sub;
 }
 
-/// Owns connections, the LAN -> internet -> Bluetooth fallback, and transfer sessions, so
+/// Owns automatic LAN/WebRTC racing, Bluetooth fallback, and transfer sessions, so
 /// screens never deal with how bytes travel. Progress is mirrored into [TransferEngine]'s
 /// transfer list and history, which the existing screens already show.
 class ConnectionManager extends ChangeNotifier {
@@ -246,9 +246,24 @@ class ConnectionManager extends ChangeNotifier {
     await host?.stop();
   }
 
-  String _verifyInternetProof(String mode, String proof, String nonce, String binding) {
+  String _verifyInternetProof(String mode, String proof, String nonce, String binding) =>
+      _verifyPairingProof(mode, proof, nonce, binding, requireHostedPeer: true);
+
+  String verifyBluetoothProof(String mode, String proof, String nonce, String binding) {
+    try {
+      return _verifyPairingProof(mode, proof, nonce, binding);
+    } on HandshakeException catch (e) {
+      final session = _engine.currentPairingSession;
+      if (e.countsAsFailedAttempt && session != null && session.registerFailedAttempt()) {
+        _engine.regeneratePairingCode();
+      }
+      rethrow;
+    }
+  }
+
+  String _verifyPairingProof(String mode, String proof, String nonce, String binding, {bool requireHostedPeer = false}) {
     final session = _engine.currentPairingSession;
-    if (session == null || session.isExpired || session.peerId != _hostedPeerId) {
+    if (session == null || session.isExpired || (requireHostedPeer && session.peerId != _hostedPeerId)) {
       throw HandshakeException('This code has expired. Ask for the new one.', countsAsFailedAttempt: true);
     }
     final List<int> secret = switch (mode) {
@@ -259,11 +274,12 @@ class ConnectionManager extends ChangeNotifier {
     if (!constantTimeEquals(proof, computeProof(secret, nonce, binding))) {
       throw HandshakeException('Wrong code.', countsAsFailedAttempt: true);
     }
+    session.invalidate();
     return randomToken(24);
   }
 
   void _onInternetConnection(InternetConnection c) {
-    // Keep the hosted room open so multiple devices can join until the normal TTL expires.
+    // A pairing credential authorizes exactly one incoming device.
     _adopt(
       channel: c.channel,
       frames: c.frames,
@@ -273,6 +289,7 @@ class ConnectionManager extends ChangeNotifier {
       relayed: c.channel.relayed,
       resumeId: c.remote.resumeId,
     );
+    _engine.regeneratePairingCode();
     HapticFeedback.mediumImpact();
   }
 
@@ -305,8 +322,27 @@ class ConnectionManager extends ChangeNotifier {
     required StreamQueue<Uint8List> frames,
     required RemoteIdentity remote,
     required String verificationCode,
+    bool incoming = false,
   }) =>
-      _adopt(channel: channel, frames: frames, remote: remote, method: TransferMethod.bluetooth, verificationCode: verificationCode);
+      _adoptBluetooth(channel, frames, remote, verificationCode, incoming);
+
+  ActiveLink _adoptBluetooth(
+    FrameChannel channel,
+    StreamQueue<Uint8List> frames,
+    RemoteIdentity remote,
+    String verificationCode,
+    bool incoming,
+  ) {
+    final link = _adopt(
+      channel: channel,
+      frames: frames,
+      remote: remote,
+      method: TransferMethod.bluetooth,
+      verificationCode: verificationCode,
+    );
+    if (incoming) _engine.regeneratePairingCode();
+    return link;
+  }
 
   ActiveLink _adopt({
     required FrameChannel channel,
@@ -443,12 +479,12 @@ class ConnectionManager extends ChangeNotifier {
     return ConnectFlow<DeviceModel>(
       lan: (token) => _connectLan(code, host, port, token),
       internetStun: (token) => _connectInternet(code, qrNonce, token, forceRelay: false, timeout: const Duration(seconds: 8)),
-      internetRelay: (token) => _connectInternet(code, qrNonce, token, forceRelay: true, timeout: const Duration(seconds: 12)),
-      bluetooth: BluetoothSupport.platformSupported ? (token) => _connectBluetooth(token) : null,
+      internetRelay: (token) => _connectInternet(code, qrNonce, token, forceRelay: true, timeout: const Duration(seconds: 8)),
+      bluetooth: BluetoothSupport.platformSupported ? (token) => _connectBluetooth(code, qrNonce, token) : null,
       isOnline: () => isOnline(),
       lanTimeout: const Duration(seconds: 4),
       stunTimeout: const Duration(seconds: 8),
-      relayTimeout: const Duration(seconds: 12),
+      relayTimeout: const Duration(seconds: 8),
       autoInternet: true,
     );
   }
@@ -465,9 +501,15 @@ class ConnectionManager extends ChangeNotifier {
     TransferMethod? preferredMethod,
   }) async {
     final clean = code.replaceAll(RegExp(r'\D'), '');
+    final cleanNonce = qrNonce?.trim();
     await flow.cancel(silent: true);
     final old = flow;
-    flow = _newFlow(code: clean, qrNonce: qrNonce, host: host, port: port);
+    flow = _newFlow(
+      code: clean,
+      qrNonce: cleanNonce == null || cleanNonce.isEmpty ? null : cleanNonce,
+      host: host,
+      port: port,
+    );
     _forwardFlow();
     old.dispose();
     if (limiter.isLocked) {
@@ -480,9 +522,6 @@ class ConnectionManager extends ChangeNotifier {
     }
     return flow.run();
   }
-
-  /// [Try over internet] after the LAN search failed.
-  Future<DeviceModel?> tryInternet() => flow.tryInternet();
 
   Future<DeviceModel?> retryConnect() => flow.run();
 
@@ -564,25 +603,35 @@ class ConnectionManager extends ChangeNotifier {
     }
   }
 
-  Future<DeviceModel> _connectBluetooth(CancelToken token) async {
+  Future<DeviceModel> _connectBluetooth(String code, String? qrNonce, CancelToken token) async {
     if (!BluetoothSupport.platformSupported) {
       throw ConnectException(ConnectFailure.other, 'Bluetooth is not supported on this platform.');
     }
     final transport = BluetoothTransport.instance;
-    await transport.startScan();
-    token.onCancel(transport.stopScan);
+    await transport.startScan(token: token);
     try {
-      for (var i = 0; i < 8; i++) {
+      final deadline = DateTime.now().add(const Duration(seconds: 8));
+      while (DateTime.now().isBefore(deadline)) {
         if (token.isCancelled) throw CancelledException();
-        if (transport.devices.isNotEmpty) {
-          final target = transport.devices.first;
-          final link = await transport.connect(target);
+        for (final target in transport.devices) {
           if (token.isCancelled) throw CancelledException();
-          return link.device;
+          try {
+            final link = await transport.connect(target, code: code, qrNonce: qrNonce, token: token);
+            if (token.isCancelled) throw CancelledException();
+            return link.device;
+          } on BluetoothException {
+            if (token.isCancelled) throw CancelledException();
+          }
         }
-        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final remaining = deadline.difference(DateTime.now());
+        if (remaining > Duration.zero) {
+          await Future.any([
+            Future<void>.delayed(remaining < const Duration(milliseconds: 500) ? remaining : const Duration(milliseconds: 500)),
+            token.whenCancelled.then((_) => throw CancelledException()),
+          ]);
+        }
       }
-      throw ConnectException(ConnectFailure.notFoundOnLan, 'No nearby Bluetooth device found.');
+      throw ConnectException(ConnectFailure.noRoute, 'Bluetooth could not connect to the device.');
     } finally {
       await transport.stopScan();
     }

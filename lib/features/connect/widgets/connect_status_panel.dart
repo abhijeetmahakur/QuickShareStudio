@@ -10,21 +10,11 @@ class ConnectStatusPanel extends StatelessWidget {
   const ConnectStatusPanel({
     super.key,
     required this.state,
-    required this.onCancel,
-    this.onTryInternet,
-    this.onUseBluetooth,
     required this.onRetry,
-    this.bluetoothAvailable = false,
-    this.bluetoothUnavailableReason,
   });
 
   final ConnectFlowState state;
-  final VoidCallback onCancel;
-  final VoidCallback? onTryInternet;
-  final VoidCallback? onUseBluetooth;
   final VoidCallback onRetry;
-  final bool bluetoothAvailable;
-  final String? bluetoothUnavailableReason;
 
   @override
   Widget build(BuildContext context) {
@@ -33,8 +23,7 @@ class ConnectStatusPanel extends StatelessWidget {
       child: switch (state.phase) {
         ConnectPhase.connecting ||
         ConnectPhase.searchingLan ||
-        ConnectPhase.tryingInternet =>
-          _busy(),
+        ConnectPhase.tryingInternet => _busy(),
         ConnectPhase.failed => _failed(),
         _ => const SizedBox.shrink(),
       },
@@ -48,7 +37,10 @@ class ConnectStatusPanel extends StatelessWidget {
       label: 'Connecting...',
       child: Container(
         margin: const EdgeInsets.only(bottom: Space.l),
-        padding: const EdgeInsets.symmetric(horizontal: Space.m, vertical: Space.m),
+        padding: const EdgeInsets.symmetric(
+          horizontal: Space.m,
+          vertical: Space.m,
+        ),
         decoration: BoxDecoration(
           color: AppColors.surfaceElevated,
           borderRadius: BorderRadius.circular(Radii.control),
@@ -75,14 +67,6 @@ class ConnectStatusPanel extends StatelessWidget {
                 ),
               ),
             ),
-            TextButton(
-              onPressed: onCancel,
-              style: TextButton.styleFrom(
-                minimumSize: const Size(minTapTarget, minTapTarget),
-                foregroundColor: AppColors.secondaryText,
-              ),
-              child: const Text('Cancel', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600)),
-            ),
           ],
         ),
       ),
@@ -107,7 +91,11 @@ class ConnectStatusPanel extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.error_outline_rounded, color: AppColors.warning, size: 20),
+                Icon(
+                  Icons.error_outline_rounded,
+                  color: AppColors.warning,
+                  size: 20,
+                ),
                 const SizedBox(width: Space.s),
                 Expanded(
                   child: Text(
@@ -128,12 +116,18 @@ class ConnectStatusPanel extends StatelessWidget {
                 foregroundColor: AppColors.nearBlack,
                 elevation: 0,
                 minimumSize: const Size(0, minTapTarget),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.control)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(Radii.control),
+                ),
               ),
               icon: const Icon(Icons.refresh_rounded, size: 16),
               label: const Text(
                 'Retry',
-                style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700, fontSize: 13),
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
               ),
             ),
           ],

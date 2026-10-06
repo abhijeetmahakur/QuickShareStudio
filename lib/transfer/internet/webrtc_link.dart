@@ -149,10 +149,11 @@ class InternetConnection {
 }
 
 Future<RTCPeerConnection> _newPeerConnection(AppConfig config, {bool forceRelay = false}) async {
-  final servers = config.iceServers(turnOnly: forceRelay);
+  final relayOnly = forceRelay || config.forceRelay;
+  final servers = relayOnly ? config.iceServers(turnOnly: true) : config.stunServers;
   return createPeerConnection({
     'iceServers': [for (final s in servers) s.toMap()],
-    'iceTransportPolicy': (forceRelay || config.forceRelay) ? 'relay' : 'all',
+    'iceTransportPolicy': relayOnly ? 'relay' : 'all',
     'sdpSemantics': 'unified-plan',
   });
 }
@@ -255,21 +256,43 @@ Future<InternetConnection> connectToPeer({
   Duration? timeout,
   int maxIceRetries = 2,
 }) async {
-  var iceRetries = 0;
-  while (true) {
+  final budget = timeout ?? config.internetConnectTimeout;
+  final deadline = DateTime.now().add(budget);
+  Object? lastError;
+  for (var iceRetries = 0; ; iceRetries++) {
     if (token.isCancelled) throw CancelledException();
+    final remaining = deadline.difference(DateTime.now());
+    if (remaining <= Duration.zero) {
+      throw lastError ??
+          ConnectException(
+            ConnectFailure.noRoute,
+            forceRelay ? 'TURN relay connection timed out.' : 'Internet connection timed out.',
+          );
+    }
+    final attemptToken = CancelToken();
+    token.onCancel(attemptToken.cancel);
     try {
-      return await _connectToPeerAttempt(
+      final attempt = _connectToPeerAttempt(
         config: config,
         targetPeerId: targetPeerId,
         me: me,
         mode: mode,
         secret: secret,
-        token: token,
+        token: attemptToken,
         forceRelay: forceRelay,
-        timeout: timeout,
+        timeout: remaining,
       );
+      final timer = Future<InternetConnection>.delayed(remaining, () async {
+        await attemptToken.cancel();
+        throw TimeoutException('Connection attempt timed out.');
+      });
+      return await Future.any([
+        attempt,
+        timer,
+        token.whenCancelled.then<InternetConnection>((_) => throw CancelledException()),
+      ]);
     } catch (e) {
+      await attemptToken.cancel();
       if (token.isCancelled) throw CancelledException();
       if (e is CancelledException) rethrow;
       if (e is ConnectException &&
@@ -278,10 +301,13 @@ Future<InternetConnection> connectToPeer({
               e.kind == ConnectFailure.rejected)) {
         rethrow;
       }
-      if (iceRetries < maxIceRetries) {
-        iceRetries++;
-        debugPrint('[QuickShare] ICE attempt failed ($e). Auto-retrying ICE ($iceRetries/$maxIceRetries)...');
-        await Future<void>.delayed(const Duration(milliseconds: 300));
+      lastError = e;
+      if (iceRetries < maxIceRetries && DateTime.now().isBefore(deadline)) {
+        debugPrint('[QuickShare] ICE attempt failed ($e). Auto-retrying ICE (${iceRetries + 1}/$maxIceRetries)...');
+        await Future.any([
+          Future<void>.delayed(const Duration(milliseconds: 300)),
+          token.whenCancelled.then((_) => throw CancelledException()),
+        ]);
         continue;
       }
       rethrow;
@@ -326,6 +352,7 @@ Future<InternetConnection> _connectToPeerAttempt({
   final frames = StreamQueue(channel.frames);
   final candidates = _CandidateBuffer(pc);
   final opened = Completer<void>();
+  Timer? disconnectedTimer;
 
   pc.onIceCandidate = (c) {
     if (c.candidate != null && c.candidate!.isNotEmpty) {
@@ -338,9 +365,7 @@ Future<InternetConnection> _connectToPeerAttempt({
   };
   pc.onIceConnectionState = (s) {
     debugPrint('[QuickShare] Joiner ICE state: $s (forceRelay: $forceRelay)');
-    if ((s == RTCIceConnectionState.RTCIceConnectionStateFailed ||
-            s == RTCIceConnectionState.RTCIceConnectionStateDisconnected) &&
-        !opened.isCompleted) {
+    if (s == RTCIceConnectionState.RTCIceConnectionStateFailed && !opened.isCompleted) {
       debugPrint('[QuickShare] Joiner ICE state failed/disconnected with target $targetPeerId');
       opened.completeError(ConnectException(
         ConnectFailure.noRoute,
@@ -350,6 +375,19 @@ Future<InternetConnection> _connectToPeerAttempt({
                 ? "The devices found each other but direct connection failed (ICE $s)."
                 : "Strict networks block direct connection (ICE $s)."),
       ));
+    } else if (s == RTCIceConnectionState.RTCIceConnectionStateDisconnected && !opened.isCompleted) {
+      disconnectedTimer ??= Timer(const Duration(seconds: 2), () {
+        if (!opened.isCompleted) {
+          opened.completeError(ConnectException(
+            ConnectFailure.noRoute,
+            forceRelay ? 'TURN relay connection disconnected.' : 'Internet connection disconnected.',
+          ));
+        }
+      });
+    } else if (s == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+        s == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+      disconnectedTimer?.cancel();
+      disconnectedTimer = null;
     }
   };
   pc.onConnectionState = (s) {
@@ -394,6 +432,7 @@ Future<InternetConnection> _connectToPeerAttempt({
       token.whenCancelled.then((_) => throw CancelledException()),
     ]).timeout(timeout ?? config.internetConnectTimeout);
   } on TimeoutException {
+    disconnectedTimer?.cancel();
     await channel.close();
     await signaling.close();
     throw ConnectException(
@@ -405,6 +444,7 @@ Future<InternetConnection> _connectToPeerAttempt({
               : 'Connecting took too long. Strict networks need a TURN relay; try again or use the same Wi-Fi.'),
     );
   } catch (_) {
+    disconnectedTimer?.cancel();
     await channel.close();
     await signaling.close();
     rethrow;
@@ -489,6 +529,7 @@ class InternetHost {
         final pc = await _newPeerConnection(config);
         _pending[id] = pc;
         final buffer = buffers[id] = _CandidateBuffer(pc);
+        Timer? disconnectedTimer;
         pc.onIceCandidate = (c) {
           if (c.candidate != null && c.candidate!.isNotEmpty) {
             final cand = c.candidate!;
@@ -500,6 +541,16 @@ class InternetHost {
         };
         pc.onIceConnectionState = (s) {
           debugPrint('[QuickShare] Host ICE state: $s');
+          if (s == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+            disconnectedTimer?.cancel();
+            _closePending(id, pc, buffers);
+          } else if (s == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+            disconnectedTimer ??= Timer(const Duration(seconds: 2), () => _closePending(id, pc, buffers));
+          } else if (s == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+              s == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+            disconnectedTimer?.cancel();
+            disconnectedTimer = null;
+          }
         };
         pc.onConnectionState = (s) {
           debugPrint('[QuickShare] Host PeerConnection state: $s');
@@ -523,6 +574,12 @@ class InternetHost {
         await buffers[id]?.add(_candidateFrom(m.candidate!));
       }
     });
+  }
+
+  void _closePending(String id, RTCPeerConnection pc, Map<String, _CandidateBuffer> buffers) {
+    if (!identical(_pending.remove(id), pc)) return;
+    buffers.remove(id);
+    unawaited(pc.close());
   }
 
   void _accept(String id, RTCPeerConnection pc, RTCDataChannel dc) {

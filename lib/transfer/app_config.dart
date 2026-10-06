@@ -173,7 +173,11 @@ class AppConfig {
 
   /// Reads the `--dart-define-from-file=.env` values.
   factory AppConfig.fromEnvironment() {
-    const stun = String.fromEnvironment('STUN_URLS', defaultValue: 'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302');
+    const stun = String.fromEnvironment(
+      'STUN_URLS',
+      defaultValue:
+          'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302,stun:stun2.l.google.com:19302,stun:stun3.l.google.com:19302,stun:stun4.l.google.com:19302,stun:stun.cloudflare.com:3478',
+    );
     const turnUrls = String.fromEnvironment('TURN_URLS');
     const turnUser = String.fromEnvironment('TURN_USERNAME');
     const turnCredential = String.fromEnvironment('TURN_CREDENTIAL');

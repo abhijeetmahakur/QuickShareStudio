@@ -2,6 +2,13 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.14] - 2026-10-07
+
+### Fixed
+- Cancel timed-out connection attempts and enforce a single eight-second budget for each WebRTC path, including ICE retries.
+- Require the supplied one-time code (and QR nonce when present) for Bluetooth pairing; rotate LAN, Internet, and Bluetooth pairing credentials after successful use.
+- Keep the connection panel to one status line and a single Retry action after all supported transports fail.
+
 ## [2.0.13] - 2026-10-07
 
 ### Added

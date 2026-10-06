@@ -9,7 +9,6 @@ import '../../data/models/device_model.dart';
 import '../../core/widgets/hover_card.dart';
 import '../../core/utils/format_utils.dart';
 import '../../data/models/transfer_item.dart';
-import '../../transfer/bluetooth/bluetooth_support.dart';
 import '../../transfer/connection_manager.dart';
 import '../../transfer/transfer_method.dart';
 import '../connect/qr_scanner_page.dart';
@@ -243,11 +242,9 @@ class _PairingViewState extends State<PairingView> {
     if (device == null || !mounted) return;
     _codeController.clear();
     HapticFeedback.mediumImpact();
-    final code = device.verificationCode;
     final methodLabel = ConnectionManager.instance.connectState.connectionMethod;
     setState(() {
-      _statusSuccess = 'Connected via $methodLabel to ${device.name}.'
-          '${code != null && code.isNotEmpty ? ' Check verification code: $code.' : ''}';
+      _statusSuccess = 'Connected via $methodLabel';
     });
   }
 
@@ -453,7 +450,7 @@ class _PairingViewState extends State<PairingView> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Connect multiple devices with a QR code or six-digit room code. Rooms stay open for 5 minutes, then close automatically.',
+                  'Connect with a QR code or six-digit code. Each code works once and expires after 5 minutes.',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 12.5,
@@ -1103,7 +1100,7 @@ class _PairingViewState extends State<PairingView> {
                       )
                     : const Icon(Icons.link_rounded, size: 20),
                 label: Text(
-                  _isConnecting ? 'Authenticating...' : 'Pair / Connect',
+                  'Pair / Connect',
                   style: const TextStyle(
                     fontFamily: 'Poppins',
                     fontWeight: FontWeight.w700,
@@ -1172,7 +1169,7 @@ class _PairingViewState extends State<PairingView> {
                         ),
                         icon: const Icon(Icons.camera_alt_rounded, size: 18),
                         label: Text(
-                          _isConnecting ? 'Connecting...' : 'Scan with Camera',
+                          'Scan with Camera',
                           style: const TextStyle(
                             fontFamily: 'Poppins',
                             fontSize: 13,
@@ -1263,10 +1260,6 @@ class _PairingViewState extends State<PairingView> {
                   final manager = ConnectionManager.instance;
                   return ConnectStatusPanel(
                     state: manager.connectState,
-                    onCancel: () {
-                      manager.cancelConnect();
-                      setState(() => _isConnecting = false);
-                    },
                     onRetry: () async {
                       setState(() => _isConnecting = true);
                       final device = await manager.retryConnect();
@@ -1274,8 +1267,6 @@ class _PairingViewState extends State<PairingView> {
                       setState(() => _isConnecting = false);
                       _onLiveResult(device);
                     },
-                    bluetoothAvailable: BluetoothSupport.platformSupported,
-                    bluetoothUnavailableReason: BluetoothSupport.unsupportedReason,
                   );
                 },
               ),
@@ -1296,7 +1287,7 @@ class _PairingViewState extends State<PairingView> {
                 SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Temporary room code: multiple devices can join for 5 minutes. The room closes automatically when it expires. '
+                    'Temporary code: it works once and expires after 5 minutes (or 5 failed attempts). '
                     'Connections are end-to-end encrypted, and files are only received after you tap Accept.',
                     style: TextStyle(
                       fontFamily: 'Poppins',

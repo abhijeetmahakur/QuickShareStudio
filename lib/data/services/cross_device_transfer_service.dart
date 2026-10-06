@@ -281,10 +281,14 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
     final session = engine.currentPairingSession;
     if (session == null || !session.isActive || code.isEmpty || code != session.numericCode) {
       failures.add(now);
+      if (session != null && session.isActive && session.registerFailedAttempt()) {
+        engine.regeneratePairingCode();
+      }
       await _writeJson(request, HttpStatus.forbidden, {'error': 'wrong or expired code'});
       return;
     }
 
+    session.invalidate();
     final token = _newToken();
     final platform = data['platform'] as String?;
     final remoteDevice = DeviceModel(
@@ -299,6 +303,7 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
     );
     _peerTokens[remoteDevice.id] = token;
     engine.addPairedDevice(remoteDevice);
+    engine.regeneratePairingCode();
 
     await _writeJson(request, HttpStatus.ok, {..._deviceInfo(), 'status': 'paired', 'token': token});
   }

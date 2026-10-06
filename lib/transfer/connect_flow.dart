@@ -19,6 +19,10 @@ class CancelToken {
     }
   }
 
+  void removeOnCancel(FutureOr<void> Function() cleanup) {
+    _cleanups.remove(cleanup);
+  }
+
   Future<void> cancel() async {
     if (isCancelled) return;
     _cancelled.complete();
@@ -139,11 +143,13 @@ class _RaceTask<T> {
   _RaceTask({
     required this.token,
     required this.label,
+    required this.timeout,
     required this.action,
   });
 
   final CancelToken token;
   final String label;
+  final Duration timeout;
   final Future<T> Function() action;
 }
 
@@ -156,7 +162,7 @@ class _Winner<T> {
 /// The automatic connection flow:
 /// 1. Same Wi-Fi / LAN direct connection (timeout ~4s)
 /// 2. PeerJS + WebRTC with STUN servers (timeout ~8s)
-/// 3. WebRTC with TURN relay (forced relay, timeout ~12s)
+/// 3. WebRTC with TURN relay (forced relay, timeout ~8s)
 /// Runs attempts 1-3 in parallel, uses the first that connects, and cancels the rest.
 /// 4. Bluetooth fallback (only if 1-3 all fail).
 class ConnectFlow<T> {
@@ -169,7 +175,7 @@ class ConnectFlow<T> {
     required this.isOnline,
     this.lanTimeout = const Duration(seconds: 4),
     this.stunTimeout = const Duration(seconds: 8),
-    this.relayTimeout = const Duration(seconds: 12),
+    this.relayTimeout = const Duration(seconds: 8),
     this.autoInternet = true,
   })  : internetStun = internetStun ?? internet;
 
@@ -202,6 +208,7 @@ class ConnectFlow<T> {
     if (token.isCancelled) return null;
 
     final tasks = <_RaceTask<T>>[];
+    Object? lastError;
 
     // Attempt 1: Same Wi-Fi / LAN direct connection (timeout ~4s)
     final lanToken = CancelToken();
@@ -209,30 +216,35 @@ class ConnectFlow<T> {
     tasks.add(_RaceTask<T>(
       token: lanToken,
       label: 'Wi-Fi',
-      action: () => lan(lanToken).timeout(lanTimeout),
+      timeout: lanTimeout,
+      action: () => lan(lanToken),
     ));
 
-    // If online, race WebRTC STUN and WebRTC TURN Relay in parallel with LAN
+    // Race WebRTC STUN and TURN relay alongside LAN when an internet path is available.
     if (online && autoInternet) {
       // Attempt 2: PeerJS + WebRTC with STUN servers (timeout ~8s)
-      if (internetStun != null) {
+      final stunConnector = internetStun;
+      if (stunConnector != null) {
         final stunToken = CancelToken();
         token.onCancel(stunToken.cancel);
         tasks.add(_RaceTask<T>(
           token: stunToken,
           label: 'Internet',
-          action: () => internetStun!(stunToken).timeout(stunTimeout),
+          timeout: stunTimeout,
+          action: () => stunConnector(stunToken),
         ));
       }
 
-      // Attempt 3: WebRTC with TURN relay (forced relay, timeout ~12s)
-      if (internetRelay != null) {
+      // Attempt 3: WebRTC with TURN relay (forced relay, timeout ~8s)
+      final relayConnector = internetRelay;
+      if (relayConnector != null) {
         final relayToken = CancelToken();
         token.onCancel(relayToken.cancel);
         tasks.add(_RaceTask<T>(
           token: relayToken,
           label: 'Relay',
-          action: () => internetRelay!(relayToken).timeout(relayTimeout),
+          timeout: relayTimeout,
+          action: () => relayConnector(relayToken),
         ));
       }
     }
@@ -245,16 +257,7 @@ class ConnectFlow<T> {
       return null;
     } catch (e) {
       if (token.isCancelled) return null;
-      // Wrong code or lockout is fatal; stop immediately.
-      if (e is ConnectException &&
-          (e.kind == ConnectFailure.wrongCode || e.kind == ConnectFailure.lockedOut)) {
-        _set(state.value.copyWith(
-          phase: ConnectPhase.failed,
-          failure: e.kind,
-          detail: e.message,
-        ));
-        return null;
-      }
+      lastError = e;
     }
 
     if (token.isCancelled) return null;
@@ -264,9 +267,24 @@ class ConnectFlow<T> {
       final btToken = CancelToken();
       token.onCancel(btToken.cancel);
       try {
-        final btResult = await _withCancel(token, bluetooth!(btToken).timeout(const Duration(seconds: 8)));
+        final btResult = await _runTimed(
+          _RaceTask<T>(
+            token: btToken,
+            label: 'Bluetooth',
+            timeout: const Duration(seconds: 8),
+            action: () => bluetooth!(btToken),
+          ),
+        );
         return _connected(token, btResult, 'Bluetooth');
-      } catch (_) {
+      } on CancelledException {
+        return null;
+      } catch (e) {
+        if (e is ConnectException &&
+            (e.kind == ConnectFailure.wrongCode ||
+                e.kind == ConnectFailure.lockedOut ||
+                e.kind == ConnectFailure.rejected)) {
+          lastError = e;
+        }
         await btToken.cancel();
       }
     }
@@ -276,16 +294,16 @@ class ConnectFlow<T> {
     // ALL methods failed
     _set(state.value.copyWith(
       phase: ConnectPhase.failed,
-      failure: ConnectFailure.noRoute,
-      detail: online
-          ? "Couldn't connect to device. Ensure both devices are on, have pairing open, and retry."
-          : "Offline: Could not find device on local Wi-Fi or Bluetooth.",
+      failure: lastError is ConnectException ? lastError.kind : ConnectFailure.noRoute,
+      detail: lastError is ConnectException &&
+              (lastError.kind == ConnectFailure.wrongCode ||
+                  lastError.kind == ConnectFailure.lockedOut ||
+                  lastError.kind == ConnectFailure.rejected)
+          ? lastError.message
+          : "Couldn't connect to device. Ensure both devices are on, have pairing open, and retry.",
     ));
     return null;
   }
-
-  /// Direct internet attempt (delegates to the automated race).
-  Future<T?> tryInternet() => run();
 
   Future<_Winner<T>> _raceTasks(List<_RaceTask<T>> tasks, CancelToken masterToken) {
     final completer = Completer<_Winner<T>>();
@@ -298,34 +316,25 @@ class ConnectFlow<T> {
     }
 
     for (final task in tasks) {
-      task.action().then((res) {
+      _runTimed(task).then((res) async {
         if (!completer.isCompleted && !masterToken.isCancelled) {
-          completer.complete(_Winner(res, task.label));
-          // Cancel other tasks immediately
-          for (final other in tasks) {
-            if (!identical(other, task)) {
-              other.token.cancel();
-            }
+          await Future.wait([
+            for (final other in tasks)
+              if (!identical(other, task)) other.token.cancel(),
+          ]);
+          if (!completer.isCompleted && !masterToken.isCancelled) {
+            completer.complete(_Winner(res, task.label));
           }
         }
       }, onError: (Object err) {
         errors.add(err);
-        if (err is ConnectException &&
-            (err.kind == ConnectFailure.wrongCode || err.kind == ConnectFailure.lockedOut)) {
-          if (!completer.isCompleted && !masterToken.isCancelled) {
-            completer.completeError(err);
-            for (final other in tasks) {
-              if (!identical(other, task)) {
-                other.token.cancel();
-              }
-            }
-          }
-          return;
-        }
         remaining--;
         if (remaining == 0 && !completer.isCompleted) {
-          final fatal = errors.whereType<ConnectException>().firstOrNull;
-          completer.completeError(fatal ?? errors.first);
+          final definitive = errors.whereType<ConnectException>().where((e) =>
+              e.kind == ConnectFailure.wrongCode ||
+              e.kind == ConnectFailure.lockedOut ||
+              e.kind == ConnectFailure.rejected);
+          completer.completeError(definitive.firstOrNull ?? errors.first);
         }
       });
     }
@@ -336,6 +345,18 @@ class ConnectFlow<T> {
     ]);
   }
 
+  Future<T> _runTimed(_RaceTask<T> task) async {
+    try {
+      return await Future.any([
+        Future<T>.sync(task.action),
+        task.token.whenCancelled.then<T>((_) => throw CancelledException()),
+      ]).timeout(task.timeout);
+    } on TimeoutException {
+      await task.token.cancel();
+      throw ConnectException(ConnectFailure.noRoute, 'Connection attempt timed out.');
+    }
+  }
+
   T? _connected(CancelToken token, T result, String label) {
     if (token.isCancelled) return null;
     _set(state.value.copyWith(
@@ -344,10 +365,6 @@ class ConnectFlow<T> {
       clearFailure: true,
     ));
     return result;
-  }
-
-  Future<R> _withCancel<R>(CancelToken token, Future<R> work) {
-    return Future.any([work, token.whenCancelled.then<R>((_) => throw CancelledException())]);
   }
 
   /// Stops the running attempt and releases its resources.

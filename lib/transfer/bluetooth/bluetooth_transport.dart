@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../../data/services/transfer_engine.dart';
 import '../connection_manager.dart';
+import '../connect_flow.dart';
 import '../protocol/handshake.dart';
 import '../secure_channel.dart';
 import 'ble_handshake.dart';
@@ -78,7 +79,8 @@ class BluetoothTransport extends ChangeNotifier {
   // Scanning (sender)
   // -------------------------------------------------------------------------------------
 
-  Future<void> startScan() async {
+  Future<void> startScan({CancelToken? token}) async {
+    token?.onCancel(stopScan);
     if (scanning) return;
     _scanSub = _stream.listen((e) {
       if (e['type'] == 'scan') {
@@ -99,7 +101,7 @@ class BluetoothTransport extends ChangeNotifier {
       }
     });
     try {
-      await _methods.invokeMethod('startScan');
+      await _wait(_methods.invokeMethod<void>('startScan'), token);
       scanning = true;
       // Devices that stop advertising drop off the list.
       _pruneTimer = Timer.periodic(const Duration(seconds: 3), (_) {
@@ -217,11 +219,23 @@ class BluetoothTransport extends ChangeNotifier {
       _setStage(BluetoothStage.securing);
       final raw = SocketFrameChannel(socket);
       final secure = await SecureFrameChannel.establish(raw, StreamQueue(raw.frames), initiator: false, psk: key);
-      final link = ConnectionManager.instance.adoptBluetooth(
+      final manager = ConnectionManager.instance;
+      final frames = StreamQueue(secure.frames);
+      final authRequired = hello['auth'] == true;
+      final remote = authRequired
+          ? await acceptHandshake(
+              secure,
+              frames,
+              manager.me,
+              verify: (mode, proof, nonce) => manager.verifyBluetoothProof(mode, proof, nonce, secure.verificationCode),
+            )
+          : RemoteIdentity.fromJson({'id': hello['id'], 'name': hello['name'], 'platform': hello['p'] ?? 'Android'});
+      final link = manager.adoptBluetooth(
         channel: secure,
-        frames: StreamQueue(secure.frames),
-        remote: RemoteIdentity.fromJson({'id': hello['id'], 'name': hello['name'], 'platform': hello['p'] ?? 'Android'}),
+        frames: frames,
+        remote: remote,
         verificationCode: secure.verificationCode,
+        incoming: authRequired,
       );
       unawaited(link.session.closed.then((_) => _methods.invokeMethod('removeGroup').catchError((_) {})));
       _setStage(BluetoothStage.connected);
@@ -243,28 +257,45 @@ class BluetoothTransport extends ChangeNotifier {
   // -------------------------------------------------------------------------------------
 
   /// Connects to [device]: BLE handshake, then Wi-Fi Direct and an encrypted socket.
-  Future<ActiveLink> connect(NearbyDevice device) async {
+  Future<ActiveLink> connect(
+    NearbyDevice device, {
+    String? code,
+    String? qrNonce,
+    CancelToken? token,
+  }) async {
+    if (code != null && !RegExp(r'^\d{6}$').hasMatch(code)) {
+      throw BluetoothException('A valid 6-digit pairing code is required.');
+    }
     await stopScan();
     final engine = TransferEngine();
     final queue = StreamQueue(_stream);
+    Socket? socket;
+    Future<void> cleanup() async {
+      socket?.destroy();
+      await _cleanupSender();
+    }
+
+    token?.onCancel(cleanup);
     try {
+      if (token?.isCancelled == true) throw CancelledException();
       _setStage(BluetoothStage.connecting);
-      await _methods.invokeMethod('connectGatt', {'address': device.address});
+      await _wait(_methods.invokeMethod<void>('connectGatt', {'address': device.address}), token);
       final ready = await _next(queue, {'peripheralReady'}, const Duration(seconds: 20),
-          'Could not connect to ${device.name} over Bluetooth. Move closer and retry.');
+          'Could not connect to ${device.name} over Bluetooth. Move closer and retry.', token);
       final mtu = (ready['mtu'] as int?) ?? 23;
 
       _setStage(BluetoothStage.exchangingKeys);
       final keys = await BleKeyAgreement.create();
       final hello = helloMessage(publicKey: keys.publicKey, name: engine.localDeviceName, id: engine.localDeviceId, platform: 'Android');
+      if (code != null) hello['auth'] = true;
       for (final piece in chunkMessage(utf8.encode(jsonEncode(hello)), mtu)) {
-        final ok = await _methods.invokeMethod<bool>('write', {'value': piece}) ?? false;
+        final ok = await _wait(_methods.invokeMethod<bool>('write', {'value': piece}), token) ?? false;
         if (!ok) throw BluetoothException('Bluetooth write failed. Retry.');
       }
       final assembler = MessageAssembler();
       Future<Map<String, dynamic>> nextMessage(Duration timeout, String timeoutMessage) async {
         while (true) {
-          final e = await _next(queue, {'peripheralNotify'}, timeout, timeoutMessage);
+          final e = await _next(queue, {'peripheralNotify'}, timeout, timeoutMessage, token);
           final message = assembler.add(e['value'] as Uint8List);
           if (message != null) return jsonDecode(utf8.decode(message)) as Map<String, dynamic>;
         }
@@ -279,32 +310,58 @@ class BluetoothTransport extends ChangeNotifier {
       final creds = await WifiCredentials.open(wifi['box'] as String, key);
 
       _setStage(BluetoothStage.joiningWifi);
-      final joined = await _methods.invokeMapMethod<String, Object?>('connectGroup', {'ssid': creds.ssid, 'passphrase': creds.passphrase});
+      final joined = await _wait(
+        _methods.invokeMapMethod<String, Object?>('connectGroup', {'ssid': creds.ssid, 'passphrase': creds.passphrase}),
+        token,
+      );
       final ip = (joined?['ip'] as String?) ?? creds.ip;
-      await _methods.invokeMethod('disconnectGatt');
+      await _wait(_methods.invokeMethod<void>('disconnectGatt'), token);
 
       _setStage(BluetoothStage.securing);
-      Socket? socket;
       for (var attempt = 0; attempt < 10 && socket == null; attempt++) {
         try {
-          socket = await Socket.connect(ip, creds.port, timeout: const Duration(seconds: 3));
+          socket = await _wait(Socket.connect(ip, creds.port, timeout: const Duration(seconds: 3)), token);
         } on SocketException {
-          await Future<void>.delayed(const Duration(milliseconds: 700)); // DHCP may still be settling
+          await _wait(Future<void>.delayed(const Duration(milliseconds: 700)), token); // DHCP may still be settling
         }
       }
       if (socket == null) throw BluetoothException('Joined Wi-Fi Direct but could not reach ${device.name}. Retry.');
       final raw = SocketFrameChannel(socket);
-      final secure = await SecureFrameChannel.establish(raw, StreamQueue(raw.frames), initiator: true, psk: key);
+      final secure = await _wait(
+        SecureFrameChannel.establish(raw, StreamQueue(raw.frames), initiator: true, psk: key),
+        token,
+      );
+      final frames = StreamQueue(secure.frames);
+      final remote = code == null
+          ? RemoteIdentity.fromJson({'id': reply['id'], 'name': reply['name'], 'platform': reply['p'] ?? 'Android'})
+          : await _wait(
+              initiateHandshake(
+                secure,
+                frames,
+                LocalIdentity(id: engine.localDeviceId, name: engine.localDeviceName, platform: ConnectionManager.platformName),
+                mode: qrNonce == null ? 'code' : 'qr',
+                prove: (nonce) => computeProof(
+                  utf8.encode(qrNonce == null ? code : '$code|$qrNonce'),
+                  nonce,
+                  secure.verificationCode,
+                ),
+              ),
+              token,
+            );
       final link = ConnectionManager.instance.adoptBluetooth(
         channel: secure,
-        frames: StreamQueue(secure.frames),
-        remote: RemoteIdentity.fromJson({'id': reply['id'], 'name': reply['name'], 'platform': reply['p'] ?? 'Android'}),
+        frames: frames,
+        remote: remote,
         verificationCode: secure.verificationCode,
       );
       unawaited(link.session.closed.then((_) => _methods.invokeMethod('removeGroup').catchError((_) {})));
       _setStage(BluetoothStage.connected);
+      if (token != null) token.removeOnCancel(cleanup);
       HapticFeedback.mediumImpact();
       return link;
+    } on CancelledException {
+      await _cleanupSender();
+      rethrow;
     } on PlatformException catch (e) {
       final message = _friendly(e);
       _setStage(BluetoothStage.failed, message);
@@ -331,14 +388,29 @@ class BluetoothTransport extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<Map<Object?, Object?>> _next(StreamQueue<Map<Object?, Object?>> queue, Set<String> types, Duration timeout, String timeoutMessage) async {
+  Future<T> _wait<T>(Future<T> future, CancelToken? token) {
+    if (token == null) return future;
+    if (token.isCancelled) throw CancelledException();
+    return Future.any([
+      future,
+      token.whenCancelled.then<T>((_) => throw CancelledException()),
+    ]);
+  }
+
+  Future<Map<Object?, Object?>> _next(
+    StreamQueue<Map<Object?, Object?>> queue,
+    Set<String> types,
+    Duration timeout,
+    String timeoutMessage,
+    CancelToken? token,
+  ) async {
     final deadline = DateTime.now().add(timeout);
     while (true) {
       final left = deadline.difference(DateTime.now());
       if (left <= Duration.zero) throw BluetoothException(timeoutMessage);
       final Map<Object?, Object?> e;
       try {
-        e = await queue.next.timeout(left);
+        e = await _wait(queue.next.timeout(left), token);
       } on TimeoutException {
         throw BluetoothException(timeoutMessage);
       }
