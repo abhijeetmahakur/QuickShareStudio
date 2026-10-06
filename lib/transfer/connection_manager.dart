@@ -16,6 +16,8 @@ import '../data/services/peer_link.dart';
 import '../data/services/transfer_engine.dart';
 import 'app_config.dart';
 import 'attempt_limiter.dart';
+import 'bluetooth/bluetooth_support.dart';
+import 'bluetooth/bluetooth_transport.dart';
 import 'channel.dart';
 import 'connect_flow.dart';
 import 'file_source.dart';
@@ -188,6 +190,9 @@ class ConnectionManager extends ChangeNotifier {
     if (!_started) return;
     if (_hostedPeerId == session.peerId && (_host?.isListening ?? false)) return;
     await stopHosting();
+    if (BluetoothSupport.platformSupported) {
+      unawaited(BluetoothTransport.instance.becomeVisible().catchError((_) {}));
+    }
     if (!settings.internetEnabled) {
       hostStatus = 'Internet connections are turned off in Settings.';
       notifyListeners();
@@ -235,6 +240,9 @@ class ConnectionManager extends ChangeNotifier {
     final host = _host;
     _host = null;
     _hostedPeerId = null;
+    if (BluetoothSupport.platformSupported) {
+      unawaited(BluetoothTransport.instance.stopVisible().catchError((_) {}));
+    }
     await host?.stop();
   }
 
@@ -434,9 +442,13 @@ class ConnectionManager extends ChangeNotifier {
   ConnectFlow<DeviceModel> _newFlow({String code = '', String? qrNonce, String? host, int? port}) {
     return ConnectFlow<DeviceModel>(
       lan: (token) => _connectLan(code, host, port, token),
-      internet: (token) => _connectInternet(code, qrNonce, token),
+      internetStun: (token) => _connectInternet(code, qrNonce, token, forceRelay: false, timeout: const Duration(seconds: 8)),
+      internetRelay: (token) => _connectInternet(code, qrNonce, token, forceRelay: true, timeout: const Duration(seconds: 12)),
+      bluetooth: BluetoothSupport.platformSupported ? (token) => _connectBluetooth(token) : null,
       isOnline: () => isOnline(),
-      lanTimeout: config.lanTimeout,
+      lanTimeout: const Duration(seconds: 4),
+      stunTimeout: const Duration(seconds: 8),
+      relayTimeout: const Duration(seconds: 12),
       autoInternet: true,
     );
   }
@@ -466,8 +478,6 @@ class ConnectionManager extends ChangeNotifier {
       );
       return null;
     }
-    final preferred = preferredMethod ?? settings.defaultMethod ?? TransferMethod.internet;
-    if (preferred == TransferMethod.internet) return flow.tryInternet();
     return flow.run();
   }
 
@@ -504,7 +514,13 @@ class ConnectionManager extends ChangeNotifier {
     }
   }
 
-  Future<DeviceModel> _connectInternet(String code, String? qrNonce, CancelToken token) async {
+  Future<DeviceModel> _connectInternet(
+    String code,
+    String? qrNonce,
+    CancelToken token, {
+    bool forceRelay = false,
+    Duration? timeout,
+  }) async {
     if (limiter.isLocked) {
       throw ConnectException(ConnectFailure.lockedOut, 'Too many wrong codes. Try again in ${_seconds(limiter.lockRemaining)}.');
     }
@@ -520,6 +536,8 @@ class ConnectionManager extends ChangeNotifier {
         mode: qrNonce != null ? 'qr' : 'code',
         secret: utf8.encode(qrNonce != null ? '$code|$qrNonce' : code),
         token: token,
+        forceRelay: forceRelay,
+        timeout: timeout,
       );
       limiter.recordSuccess();
       final link = _adopt(
@@ -528,7 +546,7 @@ class ConnectionManager extends ChangeNotifier {
         remote: c.remote,
         method: TransferMethod.internet,
         verificationCode: c.verificationCode,
-        relayed: c.channel.relayed,
+        relayed: c.channel.relayed || forceRelay,
         resumeId: c.remote.resumeId,
       );
       HapticFeedback.mediumImpact();
@@ -543,6 +561,30 @@ class ConnectionManager extends ChangeNotifier {
         throw ConnectException(e.kind, '${e.message} ($left ${left == 1 ? 'try' : 'tries'} left)');
       }
       rethrow;
+    }
+  }
+
+  Future<DeviceModel> _connectBluetooth(CancelToken token) async {
+    if (!BluetoothSupport.platformSupported) {
+      throw ConnectException(ConnectFailure.other, 'Bluetooth is not supported on this platform.');
+    }
+    final transport = BluetoothTransport.instance;
+    await transport.startScan();
+    token.onCancel(transport.stopScan);
+    try {
+      for (var i = 0; i < 8; i++) {
+        if (token.isCancelled) throw CancelledException();
+        if (transport.devices.isNotEmpty) {
+          final target = transport.devices.first;
+          final link = await transport.connect(target);
+          if (token.isCancelled) throw CancelledException();
+          return link.device;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+      throw ConnectException(ConnectFailure.notFoundOnLan, 'No nearby Bluetooth device found.');
+    } finally {
+      await transport.stopScan();
     }
   }
 

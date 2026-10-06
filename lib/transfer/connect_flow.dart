@@ -69,12 +69,13 @@ enum ConnectFailure {
   other,
 }
 
-enum ConnectPhase { idle, searchingLan, tryingInternet, connected, failed, cancelled }
+enum ConnectPhase { idle, connecting, searchingLan, tryingInternet, connected, failed, cancelled }
 
 @immutable
 class ConnectFlowState {
   const ConnectFlowState({
     this.phase = ConnectPhase.idle,
+    this.connectionMethod = 'Wi-Fi',
     this.lanFailed = false,
     this.online,
     this.failure,
@@ -83,34 +84,40 @@ class ConnectFlowState {
   });
 
   final ConnectPhase phase;
+  final String connectionMethod; // 'Wi-Fi', 'Internet', 'Relay', 'Bluetooth'
   final bool lanFailed;
   final bool? online;
   final ConnectFailure? failure;
 
-  /// Extra explanation of the last failure (e.g. what went wrong over the internet).
+  /// Extra explanation of the failure.
   final String? detail;
   final DateTime? startedAt;
 
   static const String lanNotFoundMessage =
-      "Couldn't find the device on this Wi-Fi. If you're on different networks, try over the internet. "
-      'No connection? Use Bluetooth.';
+      "Couldn't connect to device. Ensure both devices are on, have pairing open, and retry.";
 
-  bool get isBusy => phase == ConnectPhase.searchingLan || phase == ConnectPhase.tryingInternet;
+  bool get isBusy =>
+      phase == ConnectPhase.connecting ||
+      phase == ConnectPhase.searchingLan ||
+      phase == ConnectPhase.tryingInternet;
 
-  /// Whether the [Try over internet] / [Use Bluetooth] / [Retry] choices are shown.
-  bool get showsOptions => phase == ConnectPhase.failed && lanFailed;
+  /// Always false: connection is fully automatic, never prompting manual choice buttons.
+  bool get showsOptions => false;
 
   String get statusText => switch (phase) {
-        ConnectPhase.searchingLan => 'Looking on your network...',
-        ConnectPhase.tryingInternet => 'Trying over internet...',
-        ConnectPhase.connected => 'Connected',
+        ConnectPhase.connecting ||
+        ConnectPhase.searchingLan ||
+        ConnectPhase.tryingInternet =>
+          'Connecting...',
+        ConnectPhase.connected => 'Connected via $connectionMethod',
         ConnectPhase.cancelled => 'Cancelled',
-        ConnectPhase.failed => lanFailed ? lanNotFoundMessage : (detail ?? 'Could not connect.'),
+        ConnectPhase.failed => detail ?? lanNotFoundMessage,
         ConnectPhase.idle => '',
       };
 
   ConnectFlowState copyWith({
     ConnectPhase? phase,
+    String? connectionMethod,
     bool? lanFailed,
     bool? online,
     ConnectFailure? failure,
@@ -119,6 +126,7 @@ class ConnectFlowState {
   }) =>
       ConnectFlowState(
         phase: phase ?? this.phase,
+        connectionMethod: connectionMethod ?? this.connectionMethod,
         lanFailed: lanFailed ?? this.lanFailed,
         online: online ?? this.online,
         failure: clearFailure ? null : (failure ?? this.failure),
@@ -127,22 +135,52 @@ class ConnectFlowState {
       );
 }
 
-/// The fallback state machine: LAN first; if no device answers within [lanTimeout], try the
-/// internet (when online and [autoInternet]); otherwise offer internet / Bluetooth / retry.
-/// Bluetooth is always a manual choice. [cancel] stops whatever is running.
+class _RaceTask<T> {
+  _RaceTask({
+    required this.token,
+    required this.label,
+    required this.action,
+  });
+
+  final CancelToken token;
+  final String label;
+  final Future<T> Function() action;
+}
+
+class _Winner<T> {
+  _Winner(this.result, this.label);
+  final T result;
+  final String label;
+}
+
+/// The automatic connection flow:
+/// 1. Same Wi-Fi / LAN direct connection (timeout ~4s)
+/// 2. PeerJS + WebRTC with STUN servers (timeout ~8s)
+/// 3. WebRTC with TURN relay (forced relay, timeout ~12s)
+/// Runs attempts 1-3 in parallel, uses the first that connects, and cancels the rest.
+/// 4. Bluetooth fallback (only if 1-3 all fail).
 class ConnectFlow<T> {
   ConnectFlow({
     required this.lan,
-    required this.internet,
+    Future<T> Function(CancelToken token)? internet,
+    Future<T> Function(CancelToken token)? internetStun,
+    this.internetRelay,
+    this.bluetooth,
     required this.isOnline,
-    this.lanTimeout = const Duration(seconds: 5),
+    this.lanTimeout = const Duration(seconds: 4),
+    this.stunTimeout = const Duration(seconds: 8),
+    this.relayTimeout = const Duration(seconds: 12),
     this.autoInternet = true,
-  });
+  })  : internetStun = internetStun ?? internet;
 
   final Future<T> Function(CancelToken token) lan;
-  final Future<T> Function(CancelToken token) internet;
+  final Future<T> Function(CancelToken token)? internetStun;
+  final Future<T> Function(CancelToken token)? internetRelay;
+  final Future<T> Function(CancelToken token)? bluetooth;
   final Future<bool> Function() isOnline;
   final Duration lanTimeout;
+  final Duration stunTimeout;
+  final Duration relayTimeout;
   final bool autoInternet;
 
   final ValueNotifier<ConnectFlowState> state = ValueNotifier(const ConnectFlowState());
@@ -152,98 +190,159 @@ class ConnectFlow<T> {
 
   void _set(ConnectFlowState s) => state.value = s;
 
-  /// Full flow: LAN, then (maybe) internet. Returns null on failure or cancel.
+  /// Full automated flow:
+  /// Attempts 1-3 are raced in parallel; first one to connect wins and the others are cancelled.
+  /// If 1-3 all fail, Attempt 4 (Bluetooth fallback) is executed silently.
   Future<T?> run() async {
     await cancel(silent: true);
     final token = _token = CancelToken();
-    _set(ConnectFlowState(phase: ConnectPhase.searchingLan, startedAt: DateTime.now()));
+    _set(ConnectFlowState(phase: ConnectPhase.connecting, startedAt: DateTime.now()));
 
-    ConnectException? lanError;
-    // The LAN step gets its own token so a timeout also releases its sockets.
+    final online = await isOnline();
+    if (token.isCancelled) return null;
+
+    final tasks = <_RaceTask<T>>[];
+
+    // Attempt 1: Same Wi-Fi / LAN direct connection (timeout ~4s)
     final lanToken = CancelToken();
     token.onCancel(lanToken.cancel);
+    tasks.add(_RaceTask<T>(
+      token: lanToken,
+      label: 'Wi-Fi',
+      action: () => lan(lanToken).timeout(lanTimeout),
+    ));
+
+    // If online, race WebRTC STUN and WebRTC TURN Relay in parallel with LAN
+    if (online && autoInternet) {
+      // Attempt 2: PeerJS + WebRTC with STUN servers (timeout ~8s)
+      if (internetStun != null) {
+        final stunToken = CancelToken();
+        token.onCancel(stunToken.cancel);
+        tasks.add(_RaceTask<T>(
+          token: stunToken,
+          label: 'Internet',
+          action: () => internetStun!(stunToken).timeout(stunTimeout),
+        ));
+      }
+
+      // Attempt 3: WebRTC with TURN relay (forced relay, timeout ~12s)
+      if (internetRelay != null) {
+        final relayToken = CancelToken();
+        token.onCancel(relayToken.cancel);
+        tasks.add(_RaceTask<T>(
+          token: relayToken,
+          label: 'Relay',
+          action: () => internetRelay!(relayToken).timeout(relayTimeout),
+        ));
+      }
+    }
+
     try {
-      final result = await _withCancel(token, lan(lanToken).timeout(lanTimeout));
-      return _connected(token, result);
+      final winner = await _raceTasks(tasks, token);
+      if (token.isCancelled) return null;
+      return _connected(token, winner.result, winner.label);
     } on CancelledException {
       return null;
-    } on ConnectException catch (e) {
-      lanError = e;
-    } on TimeoutException {
-      lanError = ConnectException(ConnectFailure.notFoundOnLan, 'No device answered on this network.');
-    } catch (e) {
-      lanError = ConnectException(ConnectFailure.notFoundOnLan, 'No device answered on this network.');
-    }
-    await lanToken.cancel();
-    if (token.isCancelled) return null;
-    // A wrong code on the LAN is final; anything else may simply be a different network.
-    if (lanError.kind == ConnectFailure.wrongCode || lanError.kind == ConnectFailure.lockedOut) {
-      _set(state.value.copyWith(phase: ConnectPhase.failed, failure: lanError.kind, detail: lanError.message));
-      return null;
-    }
-
-    final online = await isOnline();
-    if (token.isCancelled) return null;
-    _set(state.value.copyWith(lanFailed: true, online: online));
-    if (!online) {
-      _set(state.value.copyWith(
-        phase: ConnectPhase.failed,
-        failure: ConnectFailure.noInternet,
-        detail: "You're offline, so the internet option isn't available. Use Bluetooth, or join the same Wi-Fi.",
-      ));
-      return null;
-    }
-    if (!autoInternet) {
-      _set(state.value.copyWith(phase: ConnectPhase.failed, failure: ConnectFailure.notFoundOnLan));
-      return null;
-    }
-    return _runInternet(token);
-  }
-
-  /// [Try over internet]: skips the LAN search.
-  Future<T?> tryInternet() async {
-    await cancel(silent: true);
-    final token = _token = CancelToken();
-    final lanFailed = state.value.lanFailed;
-    _set(ConnectFlowState(phase: ConnectPhase.tryingInternet, lanFailed: lanFailed, startedAt: DateTime.now()));
-    final online = await isOnline();
-    if (token.isCancelled) return null;
-    if (!online) {
-      _set(state.value.copyWith(
-        phase: ConnectPhase.failed,
-        online: false,
-        failure: ConnectFailure.noInternet,
-        detail: 'No internet connection. Use Bluetooth, or join the same Wi-Fi.',
-      ));
-      return null;
-    }
-    return _runInternet(token);
-  }
-
-  Future<T?> _runInternet(CancelToken token) async {
-    _set(state.value.copyWith(phase: ConnectPhase.tryingInternet, online: true, clearFailure: true));
-    try {
-      final result = await _withCancel(token, internet(token));
-      return _connected(token, result);
-    } on CancelledException {
-      return null;
-    } on ConnectException catch (e) {
-      if (token.isCancelled) return null;
-      _set(state.value.copyWith(phase: ConnectPhase.failed, failure: e.kind, detail: e.message));
     } catch (e) {
       if (token.isCancelled) return null;
-      _set(state.value.copyWith(
-        phase: ConnectPhase.failed,
-        failure: ConnectFailure.other,
-        detail: 'Could not connect over the internet. Please try again.',
-      ));
+      // Wrong code or lockout is fatal; stop immediately.
+      if (e is ConnectException &&
+          (e.kind == ConnectFailure.wrongCode || e.kind == ConnectFailure.lockedOut)) {
+        _set(state.value.copyWith(
+          phase: ConnectPhase.failed,
+          failure: e.kind,
+          detail: e.message,
+        ));
+        return null;
+      }
     }
+
+    if (token.isCancelled) return null;
+
+    // Attempt 4: Bluetooth fallback (only if 1-3 all fail)
+    if (bluetooth != null && !token.isCancelled) {
+      final btToken = CancelToken();
+      token.onCancel(btToken.cancel);
+      try {
+        final btResult = await _withCancel(token, bluetooth!(btToken).timeout(const Duration(seconds: 8)));
+        return _connected(token, btResult, 'Bluetooth');
+      } catch (_) {
+        await btToken.cancel();
+      }
+    }
+
+    if (token.isCancelled) return null;
+
+    // ALL methods failed
+    _set(state.value.copyWith(
+      phase: ConnectPhase.failed,
+      failure: ConnectFailure.noRoute,
+      detail: online
+          ? "Couldn't connect to device. Ensure both devices are on, have pairing open, and retry."
+          : "Offline: Could not find device on local Wi-Fi or Bluetooth.",
+    ));
     return null;
   }
 
-  T? _connected(CancelToken token, T result) {
+  /// Direct internet attempt (delegates to the automated race).
+  Future<T?> tryInternet() => run();
+
+  Future<_Winner<T>> _raceTasks(List<_RaceTask<T>> tasks, CancelToken masterToken) {
+    final completer = Completer<_Winner<T>>();
+    var remaining = tasks.length;
+    final errors = <Object>[];
+
+    if (tasks.isEmpty) {
+      completer.completeError(ConnectException(ConnectFailure.noRoute, 'No connection methods available.'));
+      return completer.future;
+    }
+
+    for (final task in tasks) {
+      task.action().then((res) {
+        if (!completer.isCompleted && !masterToken.isCancelled) {
+          completer.complete(_Winner(res, task.label));
+          // Cancel other tasks immediately
+          for (final other in tasks) {
+            if (!identical(other, task)) {
+              other.token.cancel();
+            }
+          }
+        }
+      }, onError: (Object err) {
+        errors.add(err);
+        if (err is ConnectException &&
+            (err.kind == ConnectFailure.wrongCode || err.kind == ConnectFailure.lockedOut)) {
+          if (!completer.isCompleted && !masterToken.isCancelled) {
+            completer.completeError(err);
+            for (final other in tasks) {
+              if (!identical(other, task)) {
+                other.token.cancel();
+              }
+            }
+          }
+          return;
+        }
+        remaining--;
+        if (remaining == 0 && !completer.isCompleted) {
+          final fatal = errors.whereType<ConnectException>().firstOrNull;
+          completer.completeError(fatal ?? errors.first);
+        }
+      });
+    }
+
+    return Future.any([
+      completer.future,
+      masterToken.whenCancelled.then<_Winner<T>>((_) => throw CancelledException()),
+    ]);
+  }
+
+  T? _connected(CancelToken token, T result, String label) {
     if (token.isCancelled) return null;
-    _set(state.value.copyWith(phase: ConnectPhase.connected, clearFailure: true));
+    _set(state.value.copyWith(
+      phase: ConnectPhase.connected,
+      connectionMethod: label,
+      clearFailure: true,
+    ));
     return result;
   }
 

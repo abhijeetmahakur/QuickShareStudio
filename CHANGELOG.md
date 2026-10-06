@@ -2,6 +2,17 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.13] - 2026-10-07
+
+### Added
+- Silent auto-fallback chain for device pairing: LAN direct connection (~4s), PeerJS WebRTC with STUN (~8s), WebRTC with forced TURN relay (~12s), and Bluetooth fallback.
+- Parallel racing across direct LAN, WebRTC STUN, and WebRTC Relay connection attempts, automatically adopting the first to connect and cancelling the remainder.
+- Enhanced ICE configuration with multiple STUN pools (Google, Cloudflare, Open Relay) and TURN relay servers with credentials.
+- Automatic ICE failure and disconnection handling with auto-retry up to 2 times before escalating.
+
+### Fixed
+- Replaced manual choice prompts ("Couldn't find the device on this Wi-Fi") with a streamlined single status line ("Connecting..." -> "Connected via Wi-Fi / Internet / Relay / Bluetooth") and a single Retry button on complete failure.
+
 ## [2.0.12] - 2026-10-07
 
 ### Fixed

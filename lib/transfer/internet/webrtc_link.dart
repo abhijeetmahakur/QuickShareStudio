@@ -148,11 +148,11 @@ class InternetConnection {
   String get verificationCode => channel.verificationCode;
 }
 
-Future<RTCPeerConnection> _newPeerConnection(AppConfig config) async {
-  final servers = config.iceServers();
+Future<RTCPeerConnection> _newPeerConnection(AppConfig config, {bool forceRelay = false}) async {
+  final servers = config.iceServers(turnOnly: forceRelay);
   return createPeerConnection({
     'iceServers': [for (final s in servers) s.toMap()],
-    'iceTransportPolicy': config.forceRelay ? 'relay' : 'all',
+    'iceTransportPolicy': (forceRelay || config.forceRelay) ? 'relay' : 'all',
     'sdpSemantics': 'unified-plan',
   });
 }
@@ -243,7 +243,7 @@ Future<String> _sessionBinding(RTCPeerConnection pc) async {
 }
 
 /// Sender side: connects to the device registered as [targetPeerId] and proves it knows the
-/// code (and, from a QR scan, the one-time nonce).
+/// code (and, from a QR scan, the one-time nonce). Retries ICE up to [maxIceRetries] times.
 Future<InternetConnection> connectToPeer({
   required AppConfig config,
   required String targetPeerId,
@@ -251,8 +251,55 @@ Future<InternetConnection> connectToPeer({
   required String mode,
   required List<int> secret,
   required CancelToken token,
+  bool forceRelay = false,
+  Duration? timeout,
+  int maxIceRetries = 2,
 }) async {
-  debugPrint('[QuickShare] Joiner connecting to target peer ID: $targetPeerId (mode: $mode)');
+  var iceRetries = 0;
+  while (true) {
+    if (token.isCancelled) throw CancelledException();
+    try {
+      return await _connectToPeerAttempt(
+        config: config,
+        targetPeerId: targetPeerId,
+        me: me,
+        mode: mode,
+        secret: secret,
+        token: token,
+        forceRelay: forceRelay,
+        timeout: timeout,
+      );
+    } catch (e) {
+      if (token.isCancelled) throw CancelledException();
+      if (e is CancelledException) rethrow;
+      if (e is ConnectException &&
+          (e.kind == ConnectFailure.wrongCode ||
+              e.kind == ConnectFailure.lockedOut ||
+              e.kind == ConnectFailure.rejected)) {
+        rethrow;
+      }
+      if (iceRetries < maxIceRetries) {
+        iceRetries++;
+        debugPrint('[QuickShare] ICE attempt failed ($e). Auto-retrying ICE ($iceRetries/$maxIceRetries)...');
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        continue;
+      }
+      rethrow;
+    }
+  }
+}
+
+Future<InternetConnection> _connectToPeerAttempt({
+  required AppConfig config,
+  required String targetPeerId,
+  required LocalIdentity me,
+  required String mode,
+  required List<int> secret,
+  required CancelToken token,
+  bool forceRelay = false,
+  Duration? timeout,
+}) async {
+  debugPrint('[QuickShare] Joiner connecting to target peer ID: $targetPeerId (mode: $mode, forceRelay: $forceRelay)');
   final signaling = PeerJsSignaling(config: config, peerId: PeerJsSignaling.randomSenderId());
   token.onCancel(signaling.close);
   try {
@@ -268,7 +315,7 @@ Future<InternetConnection> connectToPeer({
     throw CancelledException();
   }
 
-  final pc = await _newPeerConnection(config);
+  final pc = await _newPeerConnection(config, forceRelay: forceRelay);
   var established = false;
   token.onCancel(() async {
     if (!established) await pc.close();
@@ -290,14 +337,18 @@ Future<InternetConnection> connectToPeer({
     }
   };
   pc.onIceConnectionState = (s) {
-    debugPrint('[QuickShare] Joiner ICE state: $s');
-    if (s == RTCIceConnectionState.RTCIceConnectionStateFailed && !opened.isCompleted) {
-      debugPrint('[QuickShare] Joiner ICE state failed with target $targetPeerId');
+    debugPrint('[QuickShare] Joiner ICE state: $s (forceRelay: $forceRelay)');
+    if ((s == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+            s == RTCIceConnectionState.RTCIceConnectionStateDisconnected) &&
+        !opened.isCompleted) {
+      debugPrint('[QuickShare] Joiner ICE state failed/disconnected with target $targetPeerId');
       opened.completeError(ConnectException(
         ConnectFailure.noRoute,
-        config.hasTurn
-            ? "The devices found each other but couldn't open a connection, even through the relay. Check that neither network blocks it, or use the same Wi-Fi."
-            : "The devices found each other but their networks block a direct connection. A TURN relay is needed (see Settings → Help), or use the same Wi-Fi.",
+        forceRelay
+            ? "TURN relay connection failed (ICE $s)."
+            : (config.hasTurn
+                ? "The devices found each other but direct connection failed (ICE $s)."
+                : "Strict networks block direct connection (ICE $s)."),
       ));
     }
   };
@@ -341,15 +392,17 @@ Future<InternetConnection> connectToPeer({
     await Future.any([
       opened.future,
       token.whenCancelled.then((_) => throw CancelledException()),
-    ]).timeout(config.internetConnectTimeout);
+    ]).timeout(timeout ?? config.internetConnectTimeout);
   } on TimeoutException {
     await channel.close();
     await signaling.close();
     throw ConnectException(
       ConnectFailure.noRoute,
-      config.hasTurn
-          ? 'Connecting took too long. The networks may block it; try again or use the same Wi-Fi.'
-          : 'Connecting took too long. Strict networks need a TURN relay; try again or use the same Wi-Fi.',
+      forceRelay
+          ? 'Connecting via TURN relay took too long.'
+          : (config.hasTurn
+              ? 'Connecting took too long. The networks may block it; try again or use the same Wi-Fi.'
+              : 'Connecting took too long. Strict networks need a TURN relay; try again or use the same Wi-Fi.'),
     );
   } catch (_) {
     await channel.close();

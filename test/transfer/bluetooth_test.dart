@@ -271,39 +271,40 @@ void main() {
       return taps;
     }
 
-    testWidgets('searching shows the status and a working Cancel', (tester) async {
-      final taps = await pump(tester, const ConnectFlowState(phase: ConnectPhase.searchingLan));
-      expect(find.text('Looking on your network...'), findsOneWidget);
+    testWidgets('searching shows the single status Connecting... and a working Cancel', (tester) async {
+      final taps = await pump(tester, const ConnectFlowState(phase: ConnectPhase.connecting));
+      expect(find.text('Connecting...'), findsOneWidget);
       await tester.tap(find.text('Cancel'));
       expect(taps, ['cancel']);
       await pump(tester, const ConnectFlowState(phase: ConnectPhase.tryingInternet));
-      expect(find.text('Trying over internet...'), findsOneWidget);
+      expect(find.text('Connecting...'), findsOneWidget);
     });
 
-    testWidgets('LAN failure shows the new message and buttons', (tester) async {
-      final taps = await pump(tester, const ConnectFlowState(phase: ConnectPhase.failed, lanFailed: true, failure: ConnectFailure.notFoundOnLan));
+    testWidgets('failure shows the failure message and a single Retry button with NO manual choices', (tester) async {
+      final taps = await pump(tester, const ConnectFlowState(phase: ConnectPhase.failed, failure: ConnectFailure.notFoundOnLan));
       expect(find.text(ConnectFlowState.lanNotFoundMessage), findsOneWidget);
-      expect(find.text('No QuickShare devices answered on this network.'), findsNothing);
       expect(find.text('Try over internet'), findsNothing);
-      await tester.tap(find.text('Use Bluetooth'));
+      expect(find.text('Use Bluetooth'), findsNothing);
       await tester.tap(find.text('Retry'));
-      expect(taps, ['bluetooth', 'retry']);
+      expect(taps, ['retry']);
     });
 
-    testWidgets('offline: Bluetooth offered if available', (tester) async {
+    testWidgets('offline failure shows detail and single Retry button with NO manual choices', (tester) async {
       final taps = await pump(
         tester,
-        const ConnectFlowState(phase: ConnectPhase.failed, lanFailed: true, online: false, failure: ConnectFailure.noInternet, detail: "You're offline."),
+        const ConnectFlowState(phase: ConnectPhase.failed, online: false, failure: ConnectFailure.noInternet, detail: "You're offline."),
       );
       expect(find.text('Try over internet'), findsNothing);
-      await tester.tap(find.text('Use Bluetooth'));
-      expect(taps, ['bluetooth']);
+      expect(find.text('Use Bluetooth'), findsNothing);
       expect(find.text("You're offline."), findsOneWidget);
+      await tester.tap(find.text('Retry'));
+      expect(taps, ['retry']);
     });
 
-    testWidgets('Bluetooth button hidden where unsupported', (tester) async {
-      await pump(tester, const ConnectFlowState(phase: ConnectPhase.failed, lanFailed: true), bluetooth: false);
+    testWidgets('manual choices are never shown on ConnectStatusPanel', (tester) async {
+      await pump(tester, const ConnectFlowState(phase: ConnectPhase.failed), bluetooth: true);
       expect(find.text('Use Bluetooth'), findsNothing);
+      expect(find.text('Try over internet'), findsNothing);
     });
   });
 }

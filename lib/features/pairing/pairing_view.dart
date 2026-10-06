@@ -17,7 +17,6 @@ import '../connect/widgets/code_status_bar.dart';
 import '../connect/widgets/connect_status_panel.dart';
 import '../connect/widgets/methods_intro.dart';
 import '../connect/widgets/transfer_widgets.dart';
-import '../nearby/nearby_devices_screen.dart';
 
 enum PairingDisplayMode { qrCode, sixDigitCode }
 enum ConnectMode { sixDigitCode, scanQrCode }
@@ -245,9 +244,10 @@ class _PairingViewState extends State<PairingView> {
     _codeController.clear();
     HapticFeedback.mediumImpact();
     final code = device.verificationCode;
+    final methodLabel = ConnectionManager.instance.connectState.connectionMethod;
     setState(() {
-      _statusSuccess = 'Connected to ${device.name} (${device.method.description}).'
-          '${code != null ? ' Check that it shows the verification code $code.' : ''}';
+      _statusSuccess = 'Connected via $methodLabel to ${device.name}.'
+          '${code != null && code.isNotEmpty ? ' Check verification code: $code.' : ''}';
     });
   }
 
@@ -255,10 +255,6 @@ class _PairingViewState extends State<PairingView> {
     final value = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const QrScannerPage()));
     if (value == null || !mounted) return;
     await _connectWithQrPayload(value);
-  }
-
-  void _openNearby() {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NearbyDevicesScreen()));
   }
 
   void _handleRegenerate() {
@@ -1271,14 +1267,6 @@ class _PairingViewState extends State<PairingView> {
                       manager.cancelConnect();
                       setState(() => _isConnecting = false);
                     },
-                    onTryInternet: () async {
-                      setState(() => _isConnecting = true);
-                      final device = await manager.tryInternet();
-                      if (!mounted) return;
-                      setState(() => _isConnecting = false);
-                      _onLiveResult(device);
-                    },
-                    onUseBluetooth: _openNearby,
                     onRetry: () async {
                       setState(() => _isConnecting = true);
                       final device = await manager.retryConnect();

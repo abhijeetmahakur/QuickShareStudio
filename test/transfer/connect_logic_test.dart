@@ -89,83 +89,106 @@ void main() {
   });
 
   group('Fallback state machine', () {
-    test('LAN success connects without touching the internet', () async {
+    test('LAN success connects without touching internet and sets Connected via Wi-Fi', () async {
       var internetCalls = 0;
       final flow = ConnectFlow<String>(
         lan: (_) async => 'lan-device',
-        internet: (_) async {
+        internetStun: (_) async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
           internetCalls++;
-          return 'net';
+          return 'stun-device';
+        },
+        internetRelay: (_) async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          internetCalls++;
+          return 'relay-device';
         },
         isOnline: () async => true,
       );
       expect(await flow.run(), 'lan-device');
       expect(flow.state.value.phase, ConnectPhase.connected);
+      expect(flow.state.value.statusText, 'Connected via Wi-Fi');
       expect(internetCalls, 0);
     });
 
-    test('LAN silence -> "Trying over internet" within the LAN timeout, then connected', () async {
-      final phases = <ConnectPhase>[];
-      final internetStarted = Completer<Duration>();
-      final sw = Stopwatch()..start();
+    test('parallel racing: LAN silence races with STUN, STUN wins and cancels others', () async {
+      var lanCleaned = false;
       final flow = ConnectFlow<String>(
-        lan: (_) => Completer<String>().future, // nobody answers
-        internet: (_) async {
-          internetStarted.complete(sw.elapsed);
-          return 'net-device';
+        lan: (token) {
+          token.onCancel(() => lanCleaned = true);
+          return Completer<String>().future; // nobody answers
         },
+        internetStun: (_) async => 'stun-device',
+        internetRelay: (_) => Completer<String>().future,
         isOnline: () async => true,
-        lanTimeout: const Duration(milliseconds: 300),
       );
-      flow.state.addListener(() => phases.add(flow.state.value.phase));
-      expect(await flow.run(), 'net-device');
-      final startedAfter = await internetStarted.future;
-      expect(startedAfter, greaterThanOrEqualTo(const Duration(milliseconds: 300)));
-      expect(startedAfter, lessThan(const Duration(milliseconds: 1500)));
-      expect(phases, containsAllInOrder([ConnectPhase.searchingLan, ConnectPhase.tryingInternet, ConnectPhase.connected]));
+      expect(await flow.run(), 'stun-device');
+      expect(flow.state.value.phase, ConnectPhase.connected);
+      expect(flow.state.value.statusText, 'Connected via Internet');
+      expect(lanCleaned, isTrue);
     });
 
-    test('offline: no internet attempt; the Bluetooth/internet/retry options are shown', () async {
-      var internetCalls = 0;
+    test('auto-fallback: LAN and STUN fail, WebRTC TURN Relay wins', () async {
       final flow = ConnectFlow<String>(
-        lan: (_) async => throw ConnectException(ConnectFailure.notFoundOnLan, 'nobody'),
-        internet: (_) async {
-          internetCalls++;
-          return 'x';
-        },
-        isOnline: () async => false,
+        lan: (_) async => throw ConnectException(ConnectFailure.notFoundOnLan, 'no lan'),
+        internetStun: (_) async => throw ConnectException(ConnectFailure.noRoute, 'stun blocked'),
+        internetRelay: (_) async => 'relay-device',
+        isOnline: () async => true,
+      );
+      expect(await flow.run(), 'relay-device');
+      expect(flow.state.value.phase, ConnectPhase.connected);
+      expect(flow.state.value.statusText, 'Connected via Relay');
+    });
+
+    test('auto-fallback: 1-3 fail, Bluetooth fallback succeeds silently', () async {
+      final flow = ConnectFlow<String>(
+        lan: (_) async => throw ConnectException(ConnectFailure.notFoundOnLan, 'no lan'),
+        internetStun: (_) async => throw ConnectException(ConnectFailure.noRoute, 'no stun'),
+        internetRelay: (_) async => throw ConnectException(ConnectFailure.noRoute, 'no relay'),
+        bluetooth: (_) async => 'bt-device',
+        isOnline: () async => true,
+      );
+      expect(await flow.run(), 'bt-device');
+      expect(flow.state.value.phase, ConnectPhase.connected);
+      expect(flow.state.value.statusText, 'Connected via Bluetooth');
+    });
+
+    test('all methods fail: shows single failed status with NO manual choice options', () async {
+      final flow = ConnectFlow<String>(
+        lan: (_) async => throw ConnectException(ConnectFailure.notFoundOnLan, 'no lan'),
+        internetStun: (_) async => throw ConnectException(ConnectFailure.noRoute, 'no stun'),
+        internetRelay: (_) async => throw ConnectException(ConnectFailure.noRoute, 'no relay'),
+        bluetooth: (_) async => throw ConnectException(ConnectFailure.other, 'no bt'),
+        isOnline: () async => true,
       );
       expect(await flow.run(), isNull);
       final s = flow.state.value;
-      expect(internetCalls, 0);
       expect(s.phase, ConnectPhase.failed);
-      expect(s.failure, ConnectFailure.noInternet);
-      expect(s.showsOptions, isTrue);
-      expect(s.statusText, ConnectFlowState.lanNotFoundMessage);
+      expect(s.showsOptions, isFalse); // Never show manual choice screen!
     });
 
-    test('internet failure keeps the options and explains why', () async {
+    test('wrong code is fatal: stops immediately with wrongCode failure', () async {
       final flow = ConnectFlow<String>(
-        lan: (_) async => throw ConnectException(ConnectFailure.notFoundOnLan, 'nobody'),
-        internet: (_) async => throw ConnectException(ConnectFailure.wrongCode, 'No device is online with that code.'),
+        lan: (_) async => throw ConnectException(ConnectFailure.wrongCode, 'Wrong code.'),
+        internetStun: (_) async => throw ConnectException(ConnectFailure.wrongCode, 'Wrong code.'),
         isOnline: () async => true,
       );
       expect(await flow.run(), isNull);
       expect(flow.state.value.failure, ConnectFailure.wrongCode);
-      expect(flow.state.value.detail, 'No device is online with that code.');
-      expect(flow.state.value.showsOptions, isTrue);
+      expect(flow.state.value.detail, 'Wrong code.');
+      expect(flow.state.value.showsOptions, isFalse);
     });
 
-    test('cancel during the LAN search releases resources and stops everything', () async {
-      var lanCleaned = false, internetCalls = 0;
+    test('cancel during search releases resources and cancels all running tasks', () async {
+      var lanCleaned = false, stunCleaned = false;
       final flow = ConnectFlow<String>(
         lan: (token) {
           token.onCancel(() => lanCleaned = true);
           return Completer<String>().future;
         },
-        internet: (_) async {
-          internetCalls++;
-          return 'x';
+        internetStun: (token) {
+          token.onCancel(() => stunCleaned = true);
+          return Completer<String>().future;
         },
         isOnline: () async => true,
       );
@@ -174,57 +197,8 @@ void main() {
       await flow.cancel();
       expect(await running, isNull);
       expect(lanCleaned, isTrue);
-      expect(internetCalls, 0);
+      expect(stunCleaned, isTrue);
       expect(flow.state.value.phase, ConnectPhase.cancelled);
-    });
-
-    test('cancel while trying the internet tears down the peer', () async {
-      var peerDestroyed = false;
-      final flow = ConnectFlow<String>(
-        lan: (_) async => throw ConnectException(ConnectFailure.notFoundOnLan, 'x'),
-        internet: (token) {
-          token.onCancel(() => peerDestroyed = true);
-          return Completer<String>().future;
-        },
-        isOnline: () async => true,
-      );
-      final running = flow.run();
-      while (flow.state.value.phase != ConnectPhase.tryingInternet) {
-        await Future<void>.delayed(const Duration(milliseconds: 5));
-      }
-      await flow.cancel();
-      expect(await running, isNull);
-      expect(peerDestroyed, isTrue);
-      expect(flow.state.value.phase, ConnectPhase.cancelled);
-    });
-
-    test('a timed-out LAN search is cleaned up even though the flow continues', () async {
-      var lanCleaned = false;
-      final flow = ConnectFlow<String>(
-        lan: (token) {
-          token.onCancel(() => lanCleaned = true);
-          return Completer<String>().future;
-        },
-        internet: (_) async => 'net',
-        isOnline: () async => true,
-        lanTimeout: const Duration(milliseconds: 100),
-      );
-      expect(await flow.run(), 'net');
-      expect(lanCleaned, isTrue);
-    });
-
-    test('[Try over internet] skips the LAN search', () async {
-      var lanCalls = 0;
-      final flow = ConnectFlow<String>(
-        lan: (_) async {
-          lanCalls++;
-          return 'lan';
-        },
-        internet: (_) async => 'net',
-        isOnline: () async => true,
-      );
-      expect(await flow.tryInternet(), 'net');
-      expect(lanCalls, 0);
     });
   });
 

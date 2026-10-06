@@ -32,6 +32,7 @@ class AppConfig {
       'stun:stun2.l.google.com:19302',
       'stun:stun3.l.google.com:19302',
       'stun:stun4.l.google.com:19302',
+      'stun:stun.cloudflare.com:3478',
       'stun:openrelay.metered.ca:80',
     ]),
   ];
@@ -120,8 +121,8 @@ class AppConfig {
   bool get hasTurn => turnServers.isNotEmpty;
 
   /// ICE servers in priority order: STUN first, TURN as the fallback.
-  List<IceServer> iceServers({List<IceServer> fetchedTurn = const []}) =>
-      [...stunServers, ...turnServers, ...fetchedTurn];
+  List<IceServer> iceServers({List<IceServer> fetchedTurn = const [], bool turnOnly = false}) =>
+      turnOnly ? [...turnServers, ...fetchedTurn] : [...stunServers, ...turnServers, ...fetchedTurn];
 
   Uri get peerServerSocketUri {
     final path = peerServerPath.endsWith('/') ? peerServerPath : '$peerServerPath/';
