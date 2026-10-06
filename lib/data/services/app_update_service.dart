@@ -237,7 +237,7 @@ class AppUpdateService extends ChangeNotifier {
     if (release != null && release.isNewerVersion) {
       _latestUpdate = release;
       _status = _isUpdatePostponed ? UpdateStatus.postponed : UpdateStatus.available;
-      _statusMessage = 'New version v${release.version} is available!';
+      _statusMessage = 'Update available: v${release.version}';
 
       try {
         final prefs = await SharedPreferences.getInstance();
@@ -289,7 +289,12 @@ class AppUpdateService extends ChangeNotifier {
     final asset = (wanted == 'Windows')
         ? (assets.where((a) => (a['name'] as String? ?? '').toLowerCase().contains('windows') && (a['name'] as String? ?? '').toLowerCase().endsWith('.exe')).firstOrNull
            ?? assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull)
-        : assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull;
+        : (wanted == 'Linux'
+            ? assets.where((a) {
+                final name = (a['name'] as String? ?? '').toLowerCase();
+                return kIsWeb ? name == 'quicksharestudio-linux.tar.gz' : name.endsWith('.appimage') && name.contains('linux');
+              }).firstOrNull
+            : assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull);
     final digest = (asset?['digest'] as String? ?? '');
     var sha256 = digest.startsWith('sha256:') ? digest.substring(7) : '';
     var minSupported = '1.0.0';

@@ -1448,7 +1448,7 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                                             updateService
                                                 .latestUpdate!
                                                 .isNewerVersion
-                                        ? 'New version v${updateService.latestUpdate!.version} found!'
+                                        ? 'Update available: v${updateService.latestUpdate!.version}'
                                         : 'QuickShare is up to date (v${updateService.currentVersion}).',
                                   ),
                                 ),

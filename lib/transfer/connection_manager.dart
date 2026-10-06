@@ -445,7 +445,13 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Connects to the device showing [code]. With a scanned QR code pass its [qrNonce] (and
   /// LAN [host]/[port]). Progress is published through [flow].
-  Future<DeviceModel?> connectWithCode(String code, {String? qrNonce, String? host, int? port}) async {
+  Future<DeviceModel?> connectWithCode(
+    String code, {
+    String? qrNonce,
+    String? host,
+    int? port,
+    TransferMethod? preferredMethod,
+  }) async {
     final clean = code.replaceAll(RegExp(r'\D'), '');
     await flow.cancel(silent: true);
     final old = flow;
@@ -460,7 +466,7 @@ class ConnectionManager extends ChangeNotifier {
       );
       return null;
     }
-    final preferred = settings.defaultMethod;
+    final preferred = preferredMethod ?? settings.defaultMethod ?? TransferMethod.internet;
     if (preferred == TransferMethod.internet) return flow.tryInternet();
     return flow.run();
   }

@@ -2,6 +2,21 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.8] - 2026-10-06
+
+### Added
+- **Internet-first pairing:** Select Internet or Same Wi-Fi on Device Pairing; route changes rotate the six-digit PeerJS ID and QR credentials.
+- **Linux AppImage:** Publish a native Linux AppImage alongside the existing web launcher package.
+
+### Changed
+- Same Wi-Fi QR pairing tries the local connection first and falls back to Internet automatically; six-digit code entry uses Internet by default.
+- Linux AppImage, Windows installer, and Android APK releases support verified in-app updates.
+
+### Fixed
+- Correct five-minute pairing expiry and automatic credential regeneration at expiry.
+- Remove QR paste controls, reject invalid scans with concise feedback, and direct Linux users to six-digit code entry.
+- Reject pairing input unless it contains exactly six decimal digits.
+
 ## [2.0.7] - 2026-10-05
 
 ### Added

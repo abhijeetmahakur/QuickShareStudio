@@ -8,7 +8,8 @@ import '../../../transfer/protocol/streaming_sha256.dart';
 import '../../models/app_update_info.dart';
 import 'platform_updater.dart';
 
-bool get canSelfUpdate => Platform.isAndroid || Platform.isWindows;
+bool get canSelfUpdate =>
+    Platform.isAndroid || Platform.isWindows || (Platform.isLinux && (Platform.environment['APPIMAGE']?.isNotEmpty ?? false));
 
 const _system = MethodChannel('quickshare/system');
 
@@ -66,6 +67,71 @@ Future<InstallResult> downloadAndInstall(AppUpdateInfo update, void Function(dou
       return const InstallResult(true, 'Update downloaded! Launching installer and closing app...');
     } catch (_) {
       return const InstallResult(false, 'Could not launch installer. Opening release page...', openReleasePage: true);
+    }
+  }
+
+  if (Platform.isLinux) {
+    if (url.isEmpty || update.packageSha256.isEmpty) {
+      return const InstallResult(false, 'This release has no verified Linux AppImage.', openReleasePage: true);
+    }
+    final appImagePath = Platform.environment['APPIMAGE'];
+    if (appImagePath == null || appImagePath.isEmpty) {
+      return const InstallResult(false, 'Download the Linux AppImage from the release page.', openReleasePage: true);
+    }
+    final dir = Directory('${(await getTemporaryDirectory()).path}${Platform.pathSeparator}updates');
+    await dir.create(recursive: true);
+    final file = File('${dir.path}${Platform.pathSeparator}QuickShareStudio-${update.version}.AppImage');
+    final client = http.Client();
+    try {
+      final response = await client.send(http.Request('GET', Uri.parse(url)));
+      if (response.statusCode != 200) {
+        return InstallResult(false, 'Download failed (HTTP ${response.statusCode}). Check your connection and retry.');
+      }
+      final total = response.contentLength ?? update.packageSizeBytes;
+      final sink = file.openWrite();
+      final hash = StreamingSha256();
+      var received = 0;
+      await for (final chunk in response.stream) {
+        sink.add(chunk);
+        hash.add(chunk);
+        received += chunk.length;
+        if (total > 0) onProgress(received / total);
+      }
+      await sink.close();
+      if (hash.finish() != update.packageSha256.toLowerCase()) {
+        await file.delete();
+        return const InstallResult(false, 'The download was damaged (checksum mismatch) and was deleted. Please retry.');
+      }
+    } catch (_) {
+      return const InstallResult(false, 'Download interrupted. Check your connection and retry.');
+    } finally {
+      client.close();
+    }
+
+    try {
+      final target = File(appImagePath);
+      final probe = File('${target.path}.quickshare-write-check-$pid');
+      await probe.writeAsBytes(const []);
+      await probe.delete();
+      final script = File('${dir.path}${Platform.pathSeparator}install-appimage-update.sh');
+      await script.writeAsString(r'''#!/bin/sh
+set -eu
+app_pid="$1"
+download="$2"
+target="$3"
+staged="${target}.quickshare-update"
+while kill -0 "$app_pid" 2>/dev/null; do sleep 1; done
+cp "$download" "$staged"
+chmod 755 "$staged"
+mv -f "$staged" "$target"
+rm -f "$download"
+"$target" >/dev/null 2>&1 &
+''');
+      await Process.start('sh', [script.path, '$pid', file.path, target.path], mode: ProcessStartMode.detached);
+      Future<void>.delayed(const Duration(milliseconds: 600), () => exit(0));
+      return const InstallResult(true, 'Verified. Replacing the AppImage and restarting QuickShare Studio...');
+    } catch (_) {
+      return const InstallResult(false, 'Could not replace this AppImage. Move it to a writable folder and retry.');
     }
   }
 

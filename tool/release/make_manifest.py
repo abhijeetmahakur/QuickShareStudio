@@ -17,7 +17,9 @@ PACKAGES = {
     "windows": "QuickShareStudio-Windows-x64.zip",
     "windows_setup": "QuickShareStudio-Windows-Setup.exe",
     "linux": "QuickShareStudio-Linux.tar.gz",
+    "linux_appimage": "QuickShareStudio-Linux-x86_64.AppImage",
 }
+REQUIRED_PACKAGES = ("android", "windows", "windows_setup", "linux_appimage")
 
 
 def sha256(path):
@@ -66,14 +68,10 @@ def main():
             digest = sha256(path)
             packages[key] = {"name": name, "sha256": digest, "size": os.path.getsize(path)}
             sums.append(f"{digest}  {name}\n")
-    
-    # Also include any additional files like QuickShareStudio-Windows-Setup.exe
-    setup_name = "QuickShareStudio-Windows-Setup.exe"
-    setup_path = os.path.join(dist, setup_name)
-    if os.path.isfile(setup_path):
-        digest = sha256(setup_path)
-        packages["windows_setup"] = {"name": setup_name, "sha256": digest, "size": os.path.getsize(setup_path)}
-        sums.append(f"{digest}  {setup_name}\n")
+
+    missing = [key for key in REQUIRED_PACKAGES if key not in packages]
+    if missing:
+        raise SystemExit(f"Missing required release packages: {', '.join(missing)}")
 
     manifest = {"version": version, "minSupportedVersion": minimum, "notes": notes, "packages": packages}
     with open(os.path.join(dist, "latest.json"), "w", encoding="utf-8") as f:

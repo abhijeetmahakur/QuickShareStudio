@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -13,6 +14,8 @@ void main() {
 
   const apkSha = 'aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11';
   const winSha = 'bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22';
+  const setupSha = 'cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33';
+  const appImageSha = 'dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44';
 
   MockClient github({required String tag, required String minSupported, String? digest, String? manifestSha}) {
     return MockClient((request) async {
@@ -37,6 +40,21 @@ void main() {
                 'browser_download_url': 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/$tag/QuickShareStudio-Windows-x64.zip',
               },
               {
+                'name': 'QuickShareStudio-Windows-Setup.exe',
+                'size': 3000,
+                'browser_download_url': 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/$tag/QuickShareStudio-Windows-Setup.exe',
+              },
+              {
+                'name': 'QuickShareStudio-Linux.tar.gz',
+                'size': 4000,
+                'browser_download_url': 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/$tag/QuickShareStudio-Linux.tar.gz',
+              },
+              {
+                'name': 'QuickShareStudio-Linux-x86_64.AppImage',
+                'size': 5000,
+                'browser_download_url': 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/$tag/QuickShareStudio-Linux-x86_64.AppImage',
+              },
+              {
                 'name': 'latest.json',
                 'size': 100,
                 'browser_download_url': 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/$tag/latest.json',
@@ -55,6 +73,9 @@ void main() {
             'packages': {
               'android': {'name': 'QuickShareStudio-Android.apk', 'sha256': manifestSha ?? apkSha},
               'windows': {'name': 'QuickShareStudio-Windows-x64.zip', 'sha256': winSha},
+              'windows_setup': {'name': 'QuickShareStudio-Windows-Setup.exe', 'sha256': setupSha},
+              'linux': {'name': 'QuickShareStudio-Linux.tar.gz', 'sha256': 'ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55'},
+              'linux_appimage': {'name': 'QuickShareStudio-Linux-x86_64.AppImage', 'sha256': appImageSha},
             },
           }),
           200,
@@ -92,6 +113,37 @@ void main() {
     );
     expect(info!.isBelowMinimum, isTrue);
     expect(info.isMandatory, isTrue);
+  });
+
+  test('native Linux selects the verified AppImage for in-app updates', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final info = await http.runWithClient(
+      () => AppUpdateService().fetchLatestGitHubRelease(),
+      () => github(tag: 'v9.0.0', minSupported: '2.0.0'),
+    );
+    expect(info!.packageUrl, endsWith('/QuickShareStudio-Linux-x86_64.AppImage'));
+    expect(info.packageSha256, appImageSha);
+  });
+
+  test('Windows selects the installer executable for one-tap updates', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final info = await http.runWithClient(
+      () => AppUpdateService().fetchLatestGitHubRelease(),
+      () => github(tag: 'v9.0.0', minSupported: '2.0.0'),
+    );
+    expect(info!.packageUrl, endsWith('/QuickShareStudio-Windows-Setup.exe'));
+    expect(info.packageSha256, setupSha);
+  });
+
+  test('the updater status clearly says Update available for older installs', () async {
+    final service = AppUpdateService();
+    await http.runWithClient(
+      () => service.checkForUpdates(simulateLatency: false),
+      () => github(tag: 'v9.0.0', minSupported: '2.0.0'),
+    );
+    expect(service.statusMessage, 'Update available: v9.0.0');
   });
 
   test('checkOnLaunch flags a prompt when a newer release exists', () async {

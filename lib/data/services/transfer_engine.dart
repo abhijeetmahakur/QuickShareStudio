@@ -127,6 +127,7 @@ class TransferEngine extends ChangeNotifier {
         hostIp: localIp,
         hostPort: localPort,
         createdAt: session.createdAt,
+        preferredMethod: session.preferredMethod,
         nonce: session.nonce,
         ttl: session.ttl,
         isActive: session.isActive,
@@ -254,14 +255,10 @@ class TransferEngine extends ChangeNotifier {
     isCustomDeviceNameSaved = true;
 
     if (currentPairingSession != null) {
-      currentPairingSession = PairingSession.create(
-        hostDeviceName: localDeviceName,
-        hostIp: localIp,
-        hostPort: localPort,
-      );
+      _refreshPairingSession();
+    } else {
+      _syncPeerSession();
     }
-
-    _syncPeerSession();
 
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -275,13 +272,7 @@ class TransferEngine extends ChangeNotifier {
     localDeviceName = _defaultDeviceName;
     isCustomDeviceNameSaved = false;
 
-    if (currentPairingSession != null) {
-      currentPairingSession = PairingSession.create(
-        hostDeviceName: localDeviceName,
-        hostIp: localIp,
-        hostPort: localPort,
-      );
-    }
+    if (currentPairingSession != null) _refreshPairingSession();
 
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -324,7 +315,8 @@ class TransferEngine extends ChangeNotifier {
   // -------------------------------------------------------------
   // Device Pairing & Session Management (Section 2)
   // -------------------------------------------------------------
-  void _refreshPairingSession() {
+  void _refreshPairingSession({TransferMethod? preferredMethod}) {
+    final method = preferredMethod ?? currentPairingSession?.preferredMethod ?? TransferMethod.internet;
     if (currentPairingSession != null) {
       _invalidatedCodes.add(currentPairingSession!.numericCode);
       _invalidatedSessionIds.add(currentPairingSession!.sessionId);
@@ -336,6 +328,7 @@ class TransferEngine extends ChangeNotifier {
       hostIp: localIp,
       hostPort: localPort,
       ttl: config.codeTtl,
+      preferredMethod: method,
       maxFailedAttempts: config.maxAttempts,
     );
     scheduleCodeExpiry();
@@ -355,8 +348,8 @@ class TransferEngine extends ChangeNotifier {
     });
   }
 
-  void regeneratePairingCode() {
-    _refreshPairingSession();
+  void regeneratePairingCode({TransferMethod? preferredMethod}) {
+    _refreshPairingSession(preferredMethod: preferredMethod);
   }
 
   /// Ends the current pairing session and invalidates the session code

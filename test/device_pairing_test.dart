@@ -1,3 +1,6 @@
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +10,8 @@ import 'package:quickshare/data/models/device_model.dart';
 import 'package:quickshare/data/models/pairing_session.dart';
 import 'package:quickshare/data/services/transfer_engine.dart';
 import 'package:quickshare/features/pairing/pairing_view.dart';
+import 'package:quickshare/transfer/app_config.dart';
+import 'package:quickshare/transfer/transfer_method.dart';
 
 Widget createPairingScreen(TransferEngine engine) {
   return ChangeNotifierProvider<TransferEngine>.value(
@@ -45,6 +50,14 @@ void main() {
       expect(find.text('Active Session'), findsOneWidget);
       expect(find.text('Show my QR code'), findsOneWidget);
       expect(find.text('Show my six-digit code'), findsOneWidget);
+      expect(find.byKey(const Key('pairing_method_switch')), findsOneWidget);
+      expect(
+        tester.widget<SegmentedButton<TransferMethod>>(find.byKey(const Key('pairing_method_switch'))).selected,
+        {TransferMethod.internet},
+      );
+      expect(engine.currentPairingSession!.ttl, AppConfig.current.codeTtl);
+      expect(engine.currentPairingSession!.ttl, const Duration(minutes: 5));
+      expect(engine.currentPairingSession!.preferredMethod, TransferMethod.internet);
       expect(find.byType(QrImageView), findsOneWidget);
       expect(find.text('Regenerate QR Code'), findsOneWidget);
       expect(find.text('Connect to another device'), findsOneWidget);
@@ -74,6 +87,8 @@ void main() {
 
       await tester.pumpWidget(createPairingScreen(engine));
       await tester.pumpAndSettle();
+      final originalSessionId = engine.currentPairingSession!.sessionId;
+      final originalCode = engine.currentPairingSession!.numericCode;
 
       // Initially in QR code mode
       expect(find.byType(QrImageView), findsOneWidget);
@@ -96,6 +111,44 @@ void main() {
 
       expect(find.byType(QrImageView), findsOneWidget);
       expect(find.text('Regenerate QR Code'), findsOneWidget);
+      expect(engine.currentPairingSession!.sessionId, originalSessionId);
+      expect(engine.currentPairingSession!.numericCode, originalCode);
+    });
+
+    testWidgets('Internet and Same Wi-Fi are a working route switch that rotates credentials', (tester) async {
+      tester.view.physicalSize = const Size(1280, 1500);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(createPairingScreen(engine));
+      await tester.pumpAndSettle();
+
+      final internetSession = engine.currentPairingSession!;
+      final wifiLabel = find.descendant(of: find.byKey(const Key('pairing_method_switch')), matching: find.text('Same Wi-Fi'));
+      await tester.tapAt(tester.getCenter(wifiLabel));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      final wifiSession = engine.currentPairingSession!;
+      expect(wifiSession.preferredMethod, TransferMethod.lan);
+      expect(wifiSession.numericCode, isNot(internetSession.numericCode));
+      expect(wifiSession.sessionId, isNot(internetSession.sessionId));
+      expect(tester.widget<SegmentedButton<TransferMethod>>(find.byKey(const Key('pairing_method_switch'))).selected, {TransferMethod.lan});
+      expect(wifiSession.qrPayload, contains('mode=lan'));
+
+      final internetLabel = find.descendant(of: find.byKey(const Key('pairing_method_switch')), matching: find.text('Internet'));
+      await tester.tapAt(tester.getCenter(internetLabel), pointer: 2, kind: ui.PointerDeviceKind.mouse);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      final refreshedInternetSession = engine.currentPairingSession!;
+      expect(refreshedInternetSession.preferredMethod, TransferMethod.internet);
+      expect(refreshedInternetSession.numericCode, isNot(wifiSession.numericCode));
+      expect(refreshedInternetSession.qrPayload, contains('mode=internet'));
+      expect(tester.widget<SegmentedButton<TransferMethod>>(find.byKey(const Key('pairing_method_switch'))).selected, {TransferMethod.internet});
     });
 
     testWidgets('3. Regenerate control replaces previous code with new code and invalidates the old code', (tester) async {
@@ -355,8 +408,10 @@ void main() {
       await tester.pumpAndSettle();
 
       // Tap "Scan QR code" tab
-      await tester.tap(find.text('Scan QR code'));
-      await tester.pumpAndSettle();
+      final scanTab = find.text('Scan QR code');
+      await tester.tapAt(tester.getCenter(scanTab));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
 
       // Verify "Paste QR" is completely absent
       expect(find.text('Paste QR'), findsNothing);
@@ -365,6 +420,30 @@ void main() {
       expect(find.text('Scan Pairing QR Code'), findsOneWidget);
       expect(find.text('Scan with Camera'), findsOneWidget);
       expect(find.byKey(const Key('scan_with_camera_button')), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('That isn\'t a QuickShare pairing code.'), findsNothing);
+      expect(find.text('Pair with QR Code'), findsNothing);
+    });
+
+    testWidgets('Linux QR scan panel directs users to the six-digit code', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      tester.view.physicalSize = const Size(1280, 1500);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(createPairingScreen(engine));
+      final scanTab = find.text('Scan QR code');
+      await tester.tapAt(tester.getCenter(scanTab));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.text('Use the 6-digit code instead'), findsOneWidget);
+      expect(find.text('Scan with Camera'), findsNothing);
+      debugDefaultTargetPlatformOverride = null;
     });
   });
 }

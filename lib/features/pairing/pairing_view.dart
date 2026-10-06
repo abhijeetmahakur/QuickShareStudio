@@ -35,6 +35,7 @@ class _PairingViewState extends State<PairingView> {
   final TextEditingController _codeController = TextEditingController();
   PairingDisplayMode _activeMode = PairingDisplayMode.qrCode;
   ConnectMode _connectMode = ConnectMode.sixDigitCode;
+  TransferMethod _pairingMethod = TransferMethod.internet;
 
   bool _isConnecting = false;
   String? _statusError;
@@ -60,14 +61,15 @@ class _PairingViewState extends State<PairingView> {
 
   Future<void> _connectWithCode() async {
     final rawText = _codeController.text.trim();
-    final cleanCode = rawText.replaceAll(RegExp(r'[^0-9]'), '');
+    final isSixDigits = RegExp(r'^\d{6}$').hasMatch(rawText);
+    final cleanCode = isSixDigits ? rawText : '';
 
     setState(() {
       _statusError = null;
       _statusSuccess = null;
     });
 
-    if (cleanCode.length != 6) {
+    if (!isSixDigits) {
       setState(() {
         _statusError = 'Please enter a valid 6-digit pairing code.';
       });
@@ -156,14 +158,20 @@ class _PairingViewState extends State<PairingView> {
     if (_isLive(engine)) {
       final qr = PairingQr.parse(payload);
       if (qr == null) {
-        setState(() => _statusError = "That isn't a QuickShare pairing code. Scan the QR code on the other device's Device Pairing screen.");
+        setState(() => _statusError = 'Not a QuickShare code');
         return;
       }
       if (engine.currentPairingSession?.numericCode == qr.code) {
         setState(() => _statusError = "That's this device's own QR code. Scan the one on the other device.");
         return;
       }
-      await _connectLive(qr.code, qrNonce: qr.nonce, host: qr.host, port: qr.port);
+      await _connectLive(
+        qr.code,
+        qrNonce: qr.nonce,
+        host: qr.host,
+        port: qr.port,
+        preferredMethod: qr.preferredMethod,
+      );
       return;
     }
 
@@ -207,14 +215,26 @@ class _PairingViewState extends State<PairingView> {
   /// Real networking is running (not the demo used by tests and static previews).
   bool _isLive(TransferEngine engine) => engine.peerLink != null || ConnectionManager.instance.isStarted;
 
-  Future<void> _connectLive(String code, {String? qrNonce, String? host, int? port}) async {
+  Future<void> _connectLive(
+    String code, {
+    String? qrNonce,
+    String? host,
+    int? port,
+    TransferMethod preferredMethod = TransferMethod.internet,
+  }) async {
     final manager = ConnectionManager.instance;
     setState(() {
       _statusError = null;
       _statusSuccess = null;
       _isConnecting = true;
     });
-    final device = await manager.connectWithCode(code, qrNonce: qrNonce, host: host, port: port);
+    final device = await manager.connectWithCode(
+      code,
+      qrNonce: qrNonce,
+      host: host,
+      port: port,
+      preferredMethod: preferredMethod,
+    );
     if (!mounted) return;
     setState(() => _isConnecting = false);
     _onLiveResult(device);
@@ -459,7 +479,79 @@ class _PairingViewState extends State<PairingView> {
     if (!_isLive(engine)) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      child: CodeStatusBar(session: session, lanAvailable: engine.peerLink?.isAvailable ?? false),
+      child: CodeStatusBar(session: session),
+    );
+  }
+
+  void _selectPairingMethod(TransferMethod method) {
+    if (_pairingMethod == method) return;
+    setState(() {
+      _pairingMethod = method;
+      _statusError = null;
+      _statusSuccess = null;
+    });
+    context.read<TransferEngine>().regeneratePairingCode(preferredMethod: method);
+  }
+
+  Widget _buildPairingMethodSwitch() {
+    final description = _pairingMethod == TransferMethod.internet
+        ? 'Recommended across different networks. The six-digit code is the PeerJS ID and uses WebRTC with STUN and TURN.'
+        : 'Faster when both devices share Wi-Fi. QR tries the local route first, then falls back to Internet.';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Connection method',
+          style: TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w600, color: _primaryText),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<TransferMethod>(
+            key: const Key('pairing_method_switch'),
+            segments: const [
+              ButtonSegment<TransferMethod>(
+                value: TransferMethod.internet,
+                icon: Icon(Icons.public_rounded),
+                label: Text('Internet'),
+              ),
+              ButtonSegment<TransferMethod>(
+                value: TransferMethod.lan,
+                icon: Icon(Icons.wifi_rounded),
+                label: Text('Same Wi-Fi'),
+              ),
+            ],
+            selected: {_pairingMethod},
+            showSelectedIcon: false,
+            onSelectionChanged: (selection) => _selectPairingMethod(selection.single),
+            style: ButtonStyle(
+              foregroundColor: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.selected) ? _bgNearBlack : _primaryText,
+              ),
+              backgroundColor: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.selected) ? _limeAccent : _cardSurface,
+              ),
+              side: WidgetStateProperty.resolveWith(
+                (states) => BorderSide(color: states.contains(WidgetState.selected) ? _limeAccent : _borderSubtleLight),
+              ),
+              textStyle: WidgetStateProperty.resolveWith(
+                (states) => TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 12.5,
+                  fontWeight: states.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+              padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          description,
+          style: TextStyle(fontFamily: 'Poppins', fontSize: 11, color: _softLightGray, height: 1.35),
+        ),
+      ],
     );
   }
 
@@ -495,6 +587,8 @@ class _PairingViewState extends State<PairingView> {
           ),
           const SizedBox(height: 16),
           _codeStatus(session),
+          _buildPairingMethodSwitch(),
+          const SizedBox(height: 16),
 
           // Two Ways to Pair Switcher Tabs
           Container(
@@ -1067,29 +1161,37 @@ class _PairingViewState extends State<PairingView> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton.icon(
-                      key: const Key('scan_with_camera_button'),
-                      onPressed: _isConnecting ? null : _scanWithCamera,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _limeAccent,
-                        foregroundColor: _bgNearBlack,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      icon: const Icon(Icons.camera_alt_rounded, size: 18),
-                      label: Text(
-                        _isConnecting ? 'Connecting...' : 'Scan with Camera',
-                        style: const TextStyle(
-                          fontFamily: 'Poppins',
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
+                  if (cameraScanSupported)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton.icon(
+                        key: const Key('scan_with_camera_button'),
+                        onPressed: _isConnecting ? null : _scanWithCamera,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _limeAccent,
+                          foregroundColor: _bgNearBlack,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        icon: const Icon(Icons.camera_alt_rounded, size: 18),
+                        label: Text(
+                          _isConnecting ? 'Connecting...' : 'Scan with Camera',
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
+                    )
+                  else
+                    Text(
+                      'Use the 6-digit code instead',
+                      key: const Key('linux_camera_unavailable_hint'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w600, color: _softLightGray),
                     ),
-                  ),
                 ],
               ),
             ),

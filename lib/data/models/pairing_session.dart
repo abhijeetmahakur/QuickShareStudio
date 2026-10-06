@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
 
+import '../../transfer/transfer_method.dart';
+
 /// The code this device shows so another device can connect to it (on the LAN, or over the
 /// internet as PeerJS peer `qs-<code>`).
 ///
@@ -15,6 +17,7 @@ class PairingSession {
     required this.hostIp,
     required this.hostPort,
     required this.createdAt,
+    this.preferredMethod = TransferMethod.internet,
     String? nonce,
     this.ttl = const Duration(minutes: 5),
     this.isActive = true,
@@ -29,6 +32,7 @@ class PairingSession {
   final String hostIp;
   final int hostPort;
   final DateTime createdAt;
+  final TransferMethod preferredMethod;
 
   /// One-time secret carried only in the QR code (never typed, never on a server).
   final String nonce;
@@ -51,6 +55,7 @@ class PairingSession {
     required String hostIp,
     required int hostPort,
     Duration ttl = const Duration(minutes: 5),
+    TransferMethod preferredMethod = TransferMethod.internet,
     int maxFailedAttempts = 5,
     DateTime? now,
   }) {
@@ -69,6 +74,7 @@ class PairingSession {
       hostIp: hostIp,
       hostPort: hostPort,
       createdAt: created,
+      preferredMethod: preferredMethod,
       ttl: ttl,
       maxFailedAttempts: maxFailedAttempts,
     );
@@ -114,7 +120,7 @@ class PairingSession {
 
   /// QR payload: the code and peerId plus the one-time nonce, and the LAN address for direct pairing.
   String get qrPayload =>
-      'quickshare://pair?code=$numericCode&peerId=$numericCode&n=$nonce&sid=$sessionId&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}';
+      'quickshare://pair?code=$numericCode&peerId=$numericCode&mode=${preferredMethod.name}&n=$nonce&sid=$sessionId&host=$hostIp&port=$hostPort&name=${Uri.encodeComponent(hostDeviceName)}';
 
   /// App Deep Link for pairing confirmation
   String get appDeepLink => qrPayload;

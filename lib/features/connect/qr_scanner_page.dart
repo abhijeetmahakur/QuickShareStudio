@@ -8,10 +8,17 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/constants.dart';
+import '../../transfer/transfer_method.dart';
 
 /// What a QuickShare QR code carries.
 class PairingQr {
-  const PairingQr({required this.code, this.nonce, this.host, this.port});
+  const PairingQr({
+    required this.code,
+    this.nonce,
+    this.host,
+    this.port,
+    this.preferredMethod = TransferMethod.internet,
+  });
   final String code;
 
   /// One-time secret proving the scanner saw this QR (internet connections).
@@ -21,30 +28,37 @@ class PairingQr {
   final String? host;
   final int? port;
 
+  /// Internet is the default; Same Wi-Fi QR codes attempt LAN before falling back online.
+  final TransferMethod preferredMethod;
+
   /// Accepts `quickshare://pair?...`, a bare query string or a 6-digit code.
   static PairingQr? parse(String raw) {
     final text = raw.trim();
     if (RegExp(r'^\d{6}$').hasMatch(text)) return PairingQr(code: text);
     Uri uri;
     try {
-      uri = text.startsWith('quickshare://')
-          ? Uri.parse(text)
-          : Uri.parse('quickshare://pair?$text');
+      final isQuickShareUri = text.startsWith('quickshare://');
+      if (!isQuickShareUri && text.contains('://')) return null;
+      uri = isQuickShareUri ? Uri.parse(text) : Uri.parse('quickshare://pair?$text');
     } on FormatException {
       return null;
     }
+    if (uri.scheme != 'quickshare' || uri.host != 'pair') return null;
     final rawCode = uri.queryParameters['code'] ?? uri.queryParameters['peerId'] ?? '';
-    final code = rawCode.replaceAll(
-      RegExp(r'\D'),
-      '',
-    );
-    if (code.length != 6) return null;
+    if (!RegExp(r'^\d{6}$').hasMatch(rawCode)) return null;
+    final peerId = uri.queryParameters['peerId'];
+    if (peerId != null && peerId != rawCode) return null;
+    final hasQuickShareQueryFields =
+        uri.queryParameters.containsKey('sid') ||
+        (uri.queryParameters.containsKey('host') && uri.queryParameters.containsKey('port'));
+    if (!text.startsWith('quickshare://') && !hasQuickShareQueryFields) return null;
     final port = int.tryParse(uri.queryParameters['port'] ?? '');
     return PairingQr(
-      code: code,
+      code: rawCode,
       nonce: uri.queryParameters['n'],
       host: uri.queryParameters['host'],
       port: port,
+      preferredMethod: uri.queryParameters['mode'] == TransferMethod.lan.name ? TransferMethod.lan : TransferMethod.internet,
     );
   }
 }
@@ -171,8 +185,7 @@ class _QrScannerPageState extends State<QrScannerPage> {
   void _handleInvalidQr(String raw) {
     HapticFeedback.lightImpact();
     setState(() {
-      _invalidQrMessage =
-          "Not a QuickShare pairing QR code. Please scan the QR code from the other device's pairing screen.";
+      _invalidQrMessage = 'Not a QuickShare code';
     });
     _invalidQrTimer?.cancel();
     _invalidQrTimer = Timer(const Duration(seconds: 4), () {
