@@ -2,6 +2,11 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.12] - 2026-10-07
+
+### Fixed
+- Dashboard workspace cards now use a neutral hover state; only a card explicitly selected by the user receives the lime selected outline and icon.
+
 ## [2.0.11] - 2026-10-07
 
 ### Fixed

@@ -61,7 +61,7 @@ void main() {
   });
 
   group('B. WorkspaceCard Tests', () {
-    testWidgets('starts neutral and highlights when isSelected or hovered', (
+    testWidgets('hover stays neutral while explicit selection is highlighted', (
       tester,
     ) async {
       var tapped = false;
@@ -106,7 +106,19 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       expect(
         tester.widget<Icon>(find.byIcon(Icons.content_paste_rounded)).color,
-        AppColors.primaryAccent,
+        AppColors.white,
+      );
+      final hoveredCardDecoration = tester
+          .widget<AnimatedContainer>(
+            find.ancestor(
+              of: find.text('Universal Clipboard'),
+              matching: find.byType(AnimatedContainer),
+            ),
+          )
+          .decoration as BoxDecoration;
+      expect(
+        (hoveredCardDecoration.border! as Border).top.color,
+        AppColors.subtleBorderLight,
       );
 
       await tester.tap(find.text('Universal Clipboard'));

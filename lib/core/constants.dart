@@ -114,7 +114,7 @@ class AppColors {
 class AppConstants {
   static const String appName = 'QuickShare Studio';
   static const String appTagline = 'Cross-Platform File Sharing & Professional PDF Studio';
-  static const String appVersion = '2.0.11';
+  static const String appVersion = '2.0.12';
 
   // Network & Pairing Defaults
   static const int defaultHttpPort = 8088;

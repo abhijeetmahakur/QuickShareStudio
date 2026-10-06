@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+
 import '../../../core/constants.dart';
 
 /// Reusable interactive card for the PRIMARY ACTIONS & WORKSPACE section.
-/// Features a subtle hover effect with soft glow and highlight fitting the design palette.
+/// Hover feedback stays neutral so it cannot be mistaken for an active selection.
 class WorkspaceCard extends StatefulWidget {
   final String title;
   final String subtitle;
@@ -30,11 +31,13 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
 
   @override
   Widget build(BuildContext context) {
-    // A card is highlighted when explicitly selected or currently hovered.
-    final isHighlighted = widget.isSelected || _isHovered;
+    // Selection is persistent state; hover only adds neutral elevation feedback.
+    final isSelected = widget.isSelected;
 
     final cardContent = MouseRegion(
-      cursor: widget.onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor: widget.onTap != null
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedContainer(
@@ -45,23 +48,20 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
             : Matrix4.identity(),
         padding: const EdgeInsets.all(13.0),
         decoration: BoxDecoration(
-          color: _isHovered ? AppColors.surfaceElevated : AppColors.cardBg, // #1A1A1A -> #212121
+          color: _isHovered
+              ? AppColors.surfaceElevated
+              : AppColors.cardBg, // #1A1A1A -> #212121
           borderRadius: BorderRadius.circular(16.0),
           border: Border.all(
-            color: isHighlighted
-                ? AppColors.primaryAccent.withValues(alpha: _isHovered ? 0.85 : 0.70)
-                : AppColors.subtleBorder,
-            width: isHighlighted ? 1.5 : 1.0,
+            color: isSelected
+                ? AppColors.primaryAccent.withValues(alpha: 0.70)
+                : (_isHovered
+                      ? AppColors.subtleBorderLight
+                      : AppColors.subtleBorder),
+            width: isSelected ? 1.5 : 1.0,
           ),
           boxShadow: [
-            if (_isHovered)
-              BoxShadow(
-                color: AppColors.primaryAccent.withValues(alpha: 0.16),
-                blurRadius: 16.0,
-                spreadRadius: 0.5,
-                offset: const Offset(0, 4),
-              )
-            else if (widget.isSelected)
+            if (isSelected)
               BoxShadow(
                 color: AppColors.primaryAccent.withValues(alpha: 0.12),
                 blurRadius: 12.0,
@@ -86,21 +86,21 @@ class _WorkspaceCardState extends State<WorkspaceCard> {
               decoration: BoxDecoration(
                 color: _isHovered
                     ? AppColors.subtleBorderLight
-                    : (widget.isSelected
-                        ? AppColors.surfaceElevated
-                        : AppColors.surfaceElevated),
+                    : AppColors.surfaceElevated,
                 borderRadius: BorderRadius.circular(8.0),
                 border: Border.all(
-                  color: isHighlighted
+                  color: isSelected
                       ? AppColors.primaryAccent.withValues(alpha: 0.5)
-                      : AppColors.surfaceElevated,
+                      : (_isHovered
+                            ? AppColors.subtleBorderLight
+                            : AppColors.surfaceElevated),
                   width: 1.0,
                 ),
               ),
               child: Icon(
                 widget.icon,
                 size: 18.0,
-                color: isHighlighted ? AppColors.primaryAccent : AppColors.white,
+                color: isSelected ? AppColors.primaryAccent : AppColors.white,
               ),
             ),
             const SizedBox(height: 8.0),
