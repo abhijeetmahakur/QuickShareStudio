@@ -78,7 +78,7 @@ jobs:
       - run: flutter build web --release --wasm --no-web-resources-cdn
 
   android-build:
-    name: Android build
+    name: Android debug build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,7 +91,9 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build apk --release
+      # CI smoke-tests the debug variant; distributable releases are signed and
+      # certificate-verified in the Release workflow.
+      - run: flutter build apk --debug
 
   ios-build:
     name: iOS build (unsigned)
