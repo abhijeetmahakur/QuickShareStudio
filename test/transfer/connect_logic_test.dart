@@ -150,6 +150,9 @@ void main() {
         AppConfig().iceServers(turnOnly: true).every((server) => server.isTurn),
         isTrue,
       );
+      final allIceUrls = AppConfig().iceServers().expand((server) => server.urls);
+      expect(allIceUrls, contains('turn:openrelay.metered.ca:443?transport=tcp'));
+      expect(allIceUrls, contains('turns:openrelay.metered.ca:443'));
     });
 
     test('LAN success connects without touching internet and sets Connected via Wi-Fi', () async {
@@ -187,8 +190,38 @@ void main() {
       );
       expect(await flow.run(), 'stun-device');
       expect(flow.state.value.phase, ConnectPhase.connected);
-      expect(flow.state.value.statusText, 'Connected via Internet');
+      expect(flow.state.value.statusText, 'Connected via Direct');
       expect(lanCleaned, isTrue);
+    });
+
+    test('a false connectivity probe does not suppress Internet pairing', () async {
+      var internetStarted = false;
+      final flow = ConnectFlow<String>(
+        lan: (_) => Completer<String>().future,
+        internetStun: (_) async {
+          internetStarted = true;
+          return 'internet-device';
+        },
+        internetRelay: (_) => Completer<String>().future,
+        isOnline: () async => false,
+      );
+
+      expect(await flow.run(), 'internet-device');
+      expect(internetStarted, isTrue);
+      expect(flow.state.value.statusText, 'Connected via Direct');
+    });
+
+    test('selected ICE relay route is shown as Relay, not Direct', () async {
+      final flow = ConnectFlow<bool>(
+        lan: (_) => Completer<bool>().future,
+        internetStun: (_) async => true,
+        internetRelay: (_) => Completer<bool>().future,
+        isOnline: () async => true,
+        connectionLabel: (isRelayed, attempted) => isRelayed ? 'Relay' : attempted,
+      );
+
+      expect(await flow.run(), isTrue);
+      expect(flow.state.value.statusText, 'Connected via Relay');
     });
 
     test(
@@ -258,7 +291,7 @@ void main() {
         lan: (_) async =>
             throw ConnectException(ConnectFailure.notFoundOnLan, 'no lan'),
         internetStun: (_) async =>
-            throw ConnectException(ConnectFailure.noRoute, 'no stun'),
+            throw ConnectException(ConnectFailure.signalingUnavailable, 'PeerJS WebSocket refused the connection.'),
         internetRelay: (_) async =>
             throw ConnectException(ConnectFailure.noRoute, 'no relay'),
         bluetooth: (_) async =>
@@ -268,6 +301,8 @@ void main() {
       expect(await flow.run(), isNull);
       final s = flow.state.value;
       expect(s.phase, ConnectPhase.failed);
+      expect(s.detail, 'PeerJS WebSocket refused the connection.');
+      expect(s.statusText, contains('PeerJS WebSocket refused'));
       expect(s.showsOptions, isFalse); // Never show manual choice screen!
     });
 

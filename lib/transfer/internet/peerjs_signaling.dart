@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../app_config.dart';
@@ -14,9 +15,12 @@ import '../app_config.dart';
 /// else. Measured behaviour of the cloud (Oct 2026): `OPEN` arrives in < 1 s; an OFFER to an
 /// unknown peer ID is answered with `EXPIRE` within about a second.
 class PeerJsSignaling {
-  PeerJsSignaling({required this.config, required this.peerId, WebSocketChannel Function(Uri uri)? connect})
-      : _connect = connect ?? WebSocketChannel.connect,
-        token = _randomId(10);
+  PeerJsSignaling({
+    required this.config,
+    required this.peerId,
+    WebSocketChannel Function(Uri uri)? connect,
+  }) : _connect = connect ?? WebSocketChannel.connect,
+       token = _randomId(10);
 
   final AppConfig config;
   final String peerId;
@@ -39,17 +43,18 @@ class PeerJsSignaling {
   static String _randomId(int length) {
     const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
     final r = Random.secure();
-    return List.generate(length, (_) => alphabet[r.nextInt(alphabet.length)]).join();
+    return List.generate(
+      length,
+      (_) => alphabet[r.nextInt(alphabet.length)],
+    ).join();
   }
 
   /// A random peer ID for a sender (senders are never looked up by ID).
   static String randomSenderId() => 'qs-s-${_randomId(12)}';
 
-  Uri get uri => config.peerServerSocketUri.replace(queryParameters: {
-        'id': peerId,
-        'token': token,
-        'version': clientVersion,
-      });
+  Uri get uri => config.peerServerSocketUri.replace(
+    queryParameters: {'id': peerId, 'token': token, 'version': clientVersion},
+  );
 
   /// Registers [peerId] with the server. Throws [SignalingException].
   Future<void> open({Duration timeout = const Duration(seconds: 10)}) async {
@@ -60,15 +65,25 @@ class PeerJsSignaling {
       _socket = socket;
       await socket.ready.timeout(timeout);
     } catch (e) {
-      _finish();
-      throw SignalingException(SignalingError.unreachable, 'Could not reach the connection service.');
+      _finish(
+        'Could not open the WebSocket to ${config.peerServerHost}:${config.peerServerPort}: $e',
+      );
+      debugPrint(
+        '[QuickShare] PeerJS WebSocket connection to ${config.peerServerHost} failed: $e',
+      );
+      throw SignalingException(
+        SignalingError.unreachable,
+        'Could not reach ${config.peerServerHost}: $e',
+      );
     }
 
     socket.stream.listen(
       (raw) {
         Map<String, dynamic> msg;
         try {
-          msg = jsonDecode(raw is String ? raw : utf8.decode(raw as List<int>)) as Map<String, dynamic>;
+          msg = jsonDecode(
+            raw is String ? raw : utf8.decode(raw as List<int>),
+          ) as Map<String, dynamic>;
         } catch (_) {
           return;
         }
@@ -79,42 +94,77 @@ class PeerJsSignaling {
             if (!opened.isCompleted) opened.complete();
           case 'ID-TAKEN':
             if (!opened.isCompleted) {
-              opened.completeError(SignalingException(SignalingError.idTaken, 'That code is already in use.'));
+              opened.completeError(
+                SignalingException(
+                  SignalingError.idTaken,
+                  'That code is already in use.',
+                ),
+              );
             }
           case 'ERROR':
-            final text = (msg['payload'] is Map ? msg['payload']['msg'] : null)?.toString() ?? 'Signaling error.';
+            final text =
+                (msg['payload'] is Map ? msg['payload']['msg'] : null)
+                    ?.toString() ??
+                'Signaling error.';
             if (!opened.isCompleted) {
-              opened.completeError(SignalingException(SignalingError.server, text));
+              opened.completeError(
+                SignalingException(SignalingError.server, text),
+              );
             } else {
-              _messages.add(SignalMessage(type, msg['src']?.toString(), msg['dst']?.toString(), const {}));
+              _messages.add(
+                SignalMessage(
+                  type,
+                  msg['src']?.toString(),
+                  msg['dst']?.toString(),
+                  const {},
+                ),
+              );
             }
           case 'HEARTBEAT':
             break;
           default:
             final payload = msg['payload'];
-            _messages.add(SignalMessage(
-              type,
-              msg['src']?.toString(),
-              msg['dst']?.toString(),
-              payload is Map<String, dynamic> ? payload : const {},
-            ));
+            _messages.add(
+              SignalMessage(
+                type,
+                msg['src']?.toString(),
+                msg['dst']?.toString(),
+                payload is Map<String, dynamic> ? payload : const {},
+              ),
+            );
         }
       },
-      onError: (_) => _finish(),
-      onDone: _finish,
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint(
+          '[QuickShare] PeerJS WebSocket error for peer $peerId: $error',
+        );
+        _finish('PeerJS WebSocket error: $error');
+      },
+      onDone: () {
+        debugPrint('[QuickShare] PeerJS WebSocket closed for peer $peerId.');
+        _finish(
+          'PeerJS closed the signaling WebSocket before acknowledging the peer ID.',
+        );
+      },
       cancelOnError: true,
     );
 
     try {
       await opened.future.timeout(timeout);
     } on TimeoutException {
+      final message =
+          'PeerJS did not acknowledge peer $peerId within ${timeout.inSeconds} seconds.';
+      debugPrint('[QuickShare] $message');
       await close();
-      throw SignalingException(SignalingError.unreachable, 'The connection service did not respond.');
+      throw SignalingException(SignalingError.unreachable, message);
     } catch (_) {
       await close();
       rethrow;
     }
-    _heartbeat = Timer.periodic(const Duration(seconds: 5), (_) => _sendRaw({'type': 'HEARTBEAT'}));
+    _heartbeat = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _sendRaw({'type': 'HEARTBEAT'}),
+    );
   }
 
   void _sendRaw(Map<String, dynamic> message) {
@@ -124,34 +174,50 @@ class PeerJsSignaling {
     } catch (_) {}
   }
 
-  void sendOffer(String dst, {required String connectionId, required String sdp}) => _sendRaw({
-        'type': 'OFFER',
-        'payload': {
-          'sdp': {'sdp': sdp, 'type': 'offer'},
-          'type': 'data',
-          'connectionId': connectionId,
-          'label': connectionId,
-          'reliable': true,
-          'serialization': 'binary',
-        },
-        'dst': dst,
-      });
+  void sendOffer(
+    String dst, {
+    required String connectionId,
+    required String sdp,
+  }) => _sendRaw({
+    'type': 'OFFER',
+    'payload': {
+      'sdp': {'sdp': sdp, 'type': 'offer'},
+      'type': 'data',
+      'connectionId': connectionId,
+      'label': connectionId,
+      'reliable': true,
+      'serialization': 'binary',
+    },
+    'dst': dst,
+  });
 
-  void sendAnswer(String dst, {required String connectionId, required String sdp}) => _sendRaw({
-        'type': 'ANSWER',
-        'payload': {
-          'sdp': {'sdp': sdp, 'type': 'answer'},
-          'type': 'data',
-          'connectionId': connectionId,
-        },
-        'dst': dst,
-      });
+  void sendAnswer(
+    String dst, {
+    required String connectionId,
+    required String sdp,
+  }) => _sendRaw({
+    'type': 'ANSWER',
+    'payload': {
+      'sdp': {'sdp': sdp, 'type': 'answer'},
+      'type': 'data',
+      'connectionId': connectionId,
+    },
+    'dst': dst,
+  });
 
-  void sendCandidate(String dst, {required String connectionId, required Map<String, dynamic> candidate}) => _sendRaw({
-        'type': 'CANDIDATE',
-        'payload': {'candidate': candidate, 'type': 'data', 'connectionId': connectionId},
-        'dst': dst,
-      });
+  void sendCandidate(
+    String dst, {
+    required String connectionId,
+    required Map<String, dynamic> candidate,
+  }) => _sendRaw({
+    'type': 'CANDIDATE',
+    'payload': {
+      'candidate': candidate,
+      'type': 'data',
+      'connectionId': connectionId,
+    },
+    'dst': dst,
+  });
 
   /// Leaves the server: the peer ID stops existing immediately.
   Future<void> close() async {
@@ -166,13 +232,18 @@ class PeerJsSignaling {
     _finish();
   }
 
-  void _finish() {
+  void _finish([String? reason]) {
     _open = false;
     _heartbeat?.cancel();
     // close() during open(): fail the pending open right away instead of waiting it out.
     final opening = _opening;
     if (opening != null && !opening.isCompleted) {
-      opening.completeError(SignalingException(SignalingError.unreachable, 'Closed.'));
+      opening.completeError(
+        SignalingException(
+          SignalingError.unreachable,
+          reason ?? 'The local signaling connection closed before PeerJS acknowledged the peer ID.',
+        ),
+      );
     }
     if (!_closed.isCompleted) _closed.complete();
     if (!_messages.isClosed) _messages.close();

@@ -22,9 +22,13 @@ class MethodBadge extends StatelessWidget {
       TransferMethod.internet => const Color(0xFF60A5FA),
       TransferMethod.bluetooth => const Color(0xFFA78BFA),
     };
-    final label = relayed ? '${method.badge} · relay' : method.badge;
+    final label = method == TransferMethod.internet
+        ? (relayed ? 'Relay' : 'Direct')
+        : method.badge;
     return Semantics(
-      label: 'Connected by ${method.description}${relayed ? ' through a relay' : ''}',
+      label: method == TransferMethod.internet
+          ? 'Connected over the internet via ${relayed ? 'a relay' : 'a direct connection'}'
+          : 'Connected by ${method.description}',
       excludeSemantics: true,
       child: Container(
         padding: EdgeInsets.symmetric(horizontal: compact ? 6 : Space.s, vertical: 3),
@@ -136,7 +140,10 @@ class TransferProgressTile extends StatelessWidget {
                 Text('$direction · ${FormatUtils.formatBytes(t.fileSizeBytes)}', style: TextStyles.caption, maxLines: 1, overflow: TextOverflow.ellipsis),
               ]),
             ),
-            if (t.method != null) ...[const SizedBox(width: Space.s), MethodBadge(t.method!, compact: true)],
+            if (t.method != null) ...[
+              const SizedBox(width: Space.s),
+              MethodBadge(t.method!, compact: true, relayed: t.relayed),
+            ],
           ]),
           const SizedBox(height: Space.s),
           TweenAnimationBuilder<double>(

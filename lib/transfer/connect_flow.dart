@@ -177,6 +177,7 @@ class ConnectFlow<T> {
     this.stunTimeout = const Duration(seconds: 8),
     this.relayTimeout = const Duration(seconds: 8),
     this.autoInternet = true,
+    this.connectionLabel,
   })  : internetStun = internetStun ?? internet;
 
   final Future<T> Function(CancelToken token) lan;
@@ -188,6 +189,7 @@ class ConnectFlow<T> {
   final Duration stunTimeout;
   final Duration relayTimeout;
   final bool autoInternet;
+  final String Function(T result, String attemptLabel)? connectionLabel;
 
   final ValueNotifier<ConnectFlowState> state = ValueNotifier(const ConnectFlowState());
   CancelToken? _token;
@@ -204,8 +206,18 @@ class ConnectFlow<T> {
     final token = _token = CancelToken();
     _set(ConnectFlowState(phase: ConnectPhase.connecting, startedAt: DateTime.now()));
 
-    final online = await isOnline();
-    if (token.isCancelled) return null;
+    unawaited(
+      Future<bool>.sync(isOnline)
+          .timeout(const Duration(seconds: 2), onTimeout: () => false)
+          .then<void>(
+        (online) {
+          if (!token.isCancelled) _set(state.value.copyWith(online: online));
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          debugPrint('[QuickShare] Connectivity status check failed: $error');
+        },
+      ),
+    );
 
     final tasks = <_RaceTask<T>>[];
     Object? lastError;
@@ -220,8 +232,9 @@ class ConnectFlow<T> {
       action: () => lan(lanToken),
     ));
 
-    // Race WebRTC STUN and TURN relay alongside LAN when an internet path is available.
-    if (online && autoInternet) {
+    // Connectivity APIs report link state, not whether the signaling service is reachable.
+    // Try Internet in parallel with LAN; a fast LAN connection still wins and cancels it.
+    if (autoInternet) {
       // Attempt 2: PeerJS + WebRTC with STUN servers (timeout ~8s)
       final stunConnector = internetStun;
       if (stunConnector != null) {
@@ -229,7 +242,7 @@ class ConnectFlow<T> {
         token.onCancel(stunToken.cancel);
         tasks.add(_RaceTask<T>(
           token: stunToken,
-          label: 'Internet',
+          label: 'Direct',
           timeout: stunTimeout,
           action: () => stunConnector(stunToken),
         ));
@@ -295,12 +308,9 @@ class ConnectFlow<T> {
     _set(state.value.copyWith(
       phase: ConnectPhase.failed,
       failure: lastError is ConnectException ? lastError.kind : ConnectFailure.noRoute,
-      detail: lastError is ConnectException &&
-              (lastError.kind == ConnectFailure.wrongCode ||
-                  lastError.kind == ConnectFailure.lockedOut ||
-                  lastError.kind == ConnectFailure.rejected)
+      detail: lastError is ConnectException
           ? lastError.message
-          : "Couldn't connect to device. Ensure both devices are on, have pairing open, and retry.",
+          : lastError.toString(),
     ));
     return null;
   }
@@ -334,7 +344,9 @@ class ConnectFlow<T> {
               e.kind == ConnectFailure.wrongCode ||
               e.kind == ConnectFailure.lockedOut ||
               e.kind == ConnectFailure.rejected);
-          completer.completeError(definitive.firstOrNull ?? errors.first);
+          final signaling = errors.whereType<ConnectException>().where((e) => e.kind == ConnectFailure.signalingUnavailable);
+          final route = errors.whereType<ConnectException>().where((e) => e.kind == ConnectFailure.noRoute);
+          completer.completeError(definitive.firstOrNull ?? signaling.firstOrNull ?? route.firstOrNull ?? errors.first);
         }
       });
     }
@@ -361,7 +373,7 @@ class ConnectFlow<T> {
     if (token.isCancelled) return null;
     _set(state.value.copyWith(
       phase: ConnectPhase.connected,
-      connectionMethod: label,
+      connectionMethod: connectionLabel?.call(result, label) ?? label,
       clearFailure: true,
     ));
     return result;

@@ -2,6 +2,20 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.21] - 2026-10-07
+
+### Fixed
+- **Linux cross-network pairing & transfer:** Linux now follows the identical Internet-first + LAN shortcut flow as Windows and Android, resolving pairing issues across different networks and mobile data.
+- **WebRTC native library packaging on Linux:** Fixed release packaging so the native Linux AppImage sets `LD_LIBRARY_PATH` for `libwebrtc.so`, and added standalone native tarball and Debian `.deb` packages with in-app updater support.
+- **Detailed diagnostics & auto-reconnect:** Added step-by-step logs on Linux for PeerJS signaling, ICE candidate types (host, srflx, relay), ICE states, data channel status, and chunk progress. Host registration auto-reconnects with exponential backoff on connection loss, and direct connection falls back cleanly to TURN relay with clear UI badges (Direct vs Relay).
+
+## [2.0.20] - 2026-10-07
+
+### Fixed
+- Linux pairing now attempts PeerJS and WebRTC even when the connectivity probe reports offline, while retaining LAN as a fast path.
+- Linux WebRTC logs expose signaling, ICE candidates and states, data-channel state, and chunk progress; failed signaling keeps its actual error and host registration reconnects with backoff.
+- Linux releases bundle-check the native WebRTC libraries and publish an AppImage, Debian package, and native tarball; the compatibility web archive remains available.
+
 ## [2.0.19] - 2026-10-07
 
 ### Fixed

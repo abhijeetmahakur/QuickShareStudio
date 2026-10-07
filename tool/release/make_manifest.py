@@ -16,10 +16,12 @@ PACKAGES = {
     "android": "QuickShareStudio-Android.apk",
     "windows": "QuickShareStudio-Windows-x64.zip",
     "windows_setup": "QuickShareStudio-Windows-Setup.exe",
-    "linux": "QuickShareStudio-Linux.tar.gz",
+    "linux": "QuickShareStudio-Linux-Web.tar.gz",
     "linux_appimage": "QuickShareStudio-Linux-x86_64.AppImage",
+    "linux_deb": "QuickShareStudio-Linux-amd64.deb",
+    "linux_native_tarball": "QuickShareStudio-Linux-x86_64.tar.gz",
 }
-REQUIRED_PACKAGES = ("android", "windows", "windows_setup", "linux_appimage")
+REQUIRED_PACKAGES = ("android", "windows", "windows_setup", "linux", "linux_appimage", "linux_deb", "linux_native_tarball")
 
 
 def sha256(path):

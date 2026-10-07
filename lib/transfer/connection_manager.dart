@@ -144,7 +144,8 @@ class ConnectionManager extends ChangeNotifier {
     try {
       final results = await Connectivity().checkConnectivity();
       return results.any((r) => r != ConnectivityResult.none);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[QuickShare] Connectivity status is unavailable; Internet pairing will still be attempted: $e');
       return true; // unknown: let the attempt itself decide
     }
   }
@@ -188,7 +189,7 @@ class ConnectionManager extends ChangeNotifier {
   /// Hosts [session]'s code on PeerJS (numeric 6-digit code); the previous code's peer is destroyed.
   Future<void> hostCode(PairingSession session) async {
     if (!_started) return;
-    if (_hostedPeerId == session.peerId && (_host?.isListening ?? false)) return;
+    if (_hostedPeerId == session.peerId && _host != null) return;
     await stopHosting();
     if (BluetoothSupport.platformSupported) {
       unawaited(BluetoothTransport.instance.becomeVisible().catchError((_) {}));
@@ -199,6 +200,7 @@ class ConnectionManager extends ChangeNotifier {
       return;
     }
     if (session.isExpired) return;
+    debugPrint('[QuickShare] Registering six-digit pairing code ${session.numericCode} as the PeerJS peer ID.');
     _hostedPeerId = session.peerId;
     final host = InternetHost(
       config: config,
@@ -206,6 +208,16 @@ class ConnectionManager extends ChangeNotifier {
       me: me,
       verify: _verifyInternetProof,
       onConnection: _onInternetConnection,
+      onRegistered: () {
+        if (_hostedPeerId == session.peerId) hostStatus = null;
+        notifyListeners();
+      },
+      onSignalingError: (error) {
+        if (_hostedPeerId == session.peerId) {
+          hostStatus = 'Internet pairing could not register the code: $error. Check the network and retry.';
+        }
+        notifyListeners();
+      },
       onFailedAttempt: (_) {
         final current = _engine.currentPairingSession;
         if (current != null && current.peerId == session.peerId && current.registerFailedAttempt()) {
@@ -218,14 +230,10 @@ class ConnectionManager extends ChangeNotifier {
     _hosting = true;
     try {
       await host.start();
-      if (_host == host) hostStatus = null;
-    } catch (_) {
+      if (_host == host && host.isListening) hostStatus = null;
+    } catch (e) {
       if (_host == host) {
-        _host = null;
-        _hostedPeerId = null;
-        hostStatus = (await isOnline())
-            ? 'The internet connection service is unavailable right now. Same-Wi-Fi pairing still works.'
-            : 'Offline: other devices can reach this one on the same Wi-Fi or over Bluetooth.';
+        hostStatus = hostStatus ?? 'Internet pairing could not register the code: $e. Same-Wi-Fi pairing may still work.';
       }
     } finally {
       _hosting = false;
@@ -486,6 +494,11 @@ class ConnectionManager extends ChangeNotifier {
       stunTimeout: const Duration(seconds: 8),
       relayTimeout: const Duration(seconds: 8),
       autoInternet: true,
+      connectionLabel: (device, attempted) {
+        if (attempted == 'Relay') return 'Relay';
+        if (attempted == 'Direct') return links[device.id]?.relayed == true ? 'Relay' : 'Direct';
+        return attempted;
+      },
     );
   }
 
@@ -700,6 +713,7 @@ class ConnectionManager extends ChangeNotifier {
       peerDeviceId: device.id,
       connectionType: method.historyLabel,
       method: method,
+      relayed: link?.relayed ?? false,
       fileCount: files.length,
       rawBytes: files.length == 1 && files.first is BytesFileSource ? (files.first as BytesFileSource).bytes : null,
       status: TransferStatus.queued,
@@ -914,6 +928,7 @@ class ConnectionManager extends ChangeNotifier {
         peerDeviceId: link.device.id,
         connectionType: link.method.historyLabel,
         method: link.method,
+        relayed: link.relayed,
         fileCount: s.files.length,
         status: TransferStatus.transferring,
       ));

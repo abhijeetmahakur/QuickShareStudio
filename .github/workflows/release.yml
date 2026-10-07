@@ -57,7 +57,7 @@ jobs:
             dist/QuickShareStudio-Windows-Setup.exe
 
   linux-release:
-    name: Linux AppImage and compatibility web bundle
+    name: Linux AppImage, Debian package, and bundles
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,25 +68,85 @@ jobs:
       - name: Install Linux desktop build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libblkid-dev liblzma-dev
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libblkid-dev liblzma-dev libasound2-dev libpulse-dev
       - run: flutter config --enable-linux-desktop
       - run: flutter pub get
       - run: flutter build web --release --wasm --no-web-resources-cdn
       - run: flutter build linux --release
-      - name: Package Linux AppImage and compatibility launcher bundle
+      - name: Verify Linux WebRTC runtime
+        run: |
+          set -euo pipefail
+          BUNDLE=build/linux/x64/release/bundle
+          test -x "$BUNDLE/quickshare"
+          test -s "$BUNDLE/lib/libflutter_webrtc_plugin.so"
+          test -s "$BUNDLE/lib/libwebrtc.so"
+          for object in "$BUNDLE/quickshare" "$BUNDLE/lib/libflutter_webrtc_plugin.so" "$BUNDLE/lib/libwebrtc.so"; do
+            echo "Runtime dependencies for $object"
+            dependencies="$(ldd "$object")"
+            printf '%s\n' "$dependencies"
+            if grep -q 'not found' <<<"$dependencies"; then
+              echo "::error::A Linux runtime dependency is missing from the WebRTC app bundle."
+              exit 1
+            fi
+          done
+      - name: Package Linux AppImage, Debian package, and native/web tarballs
         run: |
           set -euo pipefail
           mkdir -p dist
-          PKG=dist/QuickShareStudio-Linux
-          mkdir -p "$PKG/web"
-          cp -r build/web/. "$PKG/web/"
-          cp scripts/server.py scripts/launch.sh "$PKG/"
-          chmod +x "$PKG/launch.sh"
-          cp LICENSE VERSION "$PKG/"
-          tar -C dist -czf dist/QuickShareStudio-Linux.tar.gz QuickShareStudio-Linux
+          BUNDLE=build/linux/x64/release/bundle
+
+          # Keep the web launcher archive for the existing in-app web updater.
+          WEB_PKG=dist/QuickShareStudio-Linux-Web
+          mkdir -p "$WEB_PKG/web"
+          cp -r build/web/. "$WEB_PKG/web/"
+          cp scripts/server.py scripts/launch.sh "$WEB_PKG/"
+          chmod +x "$WEB_PKG/launch.sh"
+          cp LICENSE VERSION "$WEB_PKG/"
+          tar -C dist -czf dist/QuickShareStudio-Linux-Web.tar.gz QuickShareStudio-Linux-Web
+
+          # The native tarball contains the executable and every bundled plugin library.
+          NATIVE_PKG="$RUNNER_TEMP/QuickShareStudio-Linux-x86_64"
+          mkdir -p "$NATIVE_PKG"
+          cp -a "$BUNDLE/." "$NATIVE_PKG/"
+          cp LICENSE VERSION "$NATIVE_PKG/"
+          tar -C "$RUNNER_TEMP" -czf dist/QuickShareStudio-Linux-x86_64.tar.gz QuickShareStudio-Linux-x86_64
+
+          # Installable Debian package.
+          VERSION_NUMBER="$(grep '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]*([0-9.]+).*/\1/' | tr -d '[:space:]')"
+          DEBDIR="$RUNNER_TEMP/quickshare-deb"
+          mkdir -p "$DEBDIR/DEBIAN" "$DEBDIR/usr/bin" "$DEBDIR/usr/lib/quickshare" \
+            "$DEBDIR/usr/share/applications" "$DEBDIR/usr/share/icons/hicolor/256x256/apps"
+          cp -a "$BUNDLE/." "$DEBDIR/usr/lib/quickshare/"
+          cat > "$DEBDIR/DEBIAN/control" <<EOF
+          Package: quickshare-studio
+          Version: $VERSION_NUMBER
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Abhijeet Mahakur <abhijeetmahakur@users.noreply.github.com>
+          Depends: libc6, libgcc-s1, libstdc++6, libgtk-3-0 | libgtk-3-0t64, libblkid1, liblzma5, libpulse0
+          Description: QuickShare Studio cross-platform file sharing and universal clipboard
+          EOF
+          cat > "$DEBDIR/usr/bin/quickshare" <<'EOF'
+          #!/bin/sh
+          exec /usr/lib/quickshare/quickshare "$@"
+          EOF
+          chmod +x "$DEBDIR/usr/bin/quickshare"
+          cp assets/logo.png "$DEBDIR/usr/share/icons/hicolor/256x256/apps/quickshare.png"
+          cat > "$DEBDIR/usr/share/applications/quickshare.desktop" <<'EOF'
+          [Desktop Entry]
+          Name=QuickShare Studio
+          Exec=/usr/bin/quickshare
+          Icon=quickshare
+          Type=Application
+          Categories=Utility;Network;
+          EOF
+          dpkg-deb --build --root-owner-group "$DEBDIR" dist/QuickShareStudio-Linux-amd64.deb
+
+          # AppImage with the complete native bundle and a local library search path.
           APPDIR="$RUNNER_TEMP/QuickShareStudio.AppDir"
           mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-          cp -a build/linux/x64/release/bundle/. "$APPDIR/usr/bin/"
+          cp -a "$BUNDLE/." "$APPDIR/usr/bin/"
           cp assets/logo.png "$APPDIR/quickshare.png"
           cp assets/logo.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/quickshare.png"
           cat > "$APPDIR/quickshare.desktop" <<'EOF'
@@ -101,6 +161,7 @@ jobs:
           cat > "$APPDIR/AppRun" <<'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
+          export LD_LIBRARY_PATH="$HERE/usr/bin/lib:$HERE/usr/lib:${LD_LIBRARY_PATH:-}"
           cd "$HERE/usr/bin"
           exec "$HERE/usr/bin/quickshare" "$@"
           EOF
@@ -115,8 +176,10 @@ jobs:
         with:
           name: linux-packages
           path: |
-            dist/QuickShareStudio-Linux.tar.gz
+            dist/QuickShareStudio-Linux-Web.tar.gz
+            dist/QuickShareStudio-Linux-x86_64.tar.gz
             dist/QuickShareStudio-Linux-x86_64.AppImage
+            dist/QuickShareStudio-Linux-amd64.deb
 
   android-release:
     name: Android APK
@@ -145,8 +208,22 @@ jobs:
           : "${KEY_ALIAS:?Set the ANDROID_KEY_ALIAS Actions secret.}"
           : "${KEY_PASSWORD:?Set the ANDROID_KEY_PASSWORD Actions secret.}"
           : "${EXPECTED_CERT_SHA256:?Set the ANDROID_RELEASE_CERT_SHA256 Actions secret.}"
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/release.jks
-          test -s android/release.jks
+          if [[ ! "$KEYSTORE_BASE64" =~ ^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$ ]]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 must be one standard Base64 string with no quotes, spaces, or line breaks."
+            exit 1
+          fi
+          decoded_keystore="$RUNNER_TEMP/quickshare-release.jks"
+          if ! printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$decoded_keystore"; then
+            rm -f "$decoded_keystore"
+            echo "::error::ANDROID_KEYSTORE_BASE64 could not be decoded. Re-encode the original release keystore as a single Base64 string."
+            exit 1
+          fi
+          if [[ ! -s "$decoded_keystore" ]]; then
+            rm -f "$decoded_keystore"
+            echo "::error::ANDROID_KEYSTORE_BASE64 decoded to an empty file."
+            exit 1
+          fi
+          mv "$decoded_keystore" android/release.jks
           echo "ANDROID_KEYSTORE_PATH=release.jks" >> "$GITHUB_ENV"
           echo "Configured the required Android release keystore."
       - name: Build APK

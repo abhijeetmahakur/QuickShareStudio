@@ -549,6 +549,13 @@ class _PairingViewState extends State<PairingView> {
   }
 
   Widget _buildShareCredentialsCard(dynamic session, bool isSessionActive) {
+    ConnectionManager? manager;
+    try {
+      manager = context.watch<ConnectionManager>();
+    } catch (_) {
+      manager = ConnectionManager.instance;
+    }
+    final hostStatus = manager.hostStatus;
     return Container(
       decoration: BoxDecoration(
         color: _panelCharcoal,
@@ -580,6 +587,34 @@ class _PairingViewState extends State<PairingView> {
           ),
           const SizedBox(height: 16),
           _codeStatus(session),
+          if (hostStatus != null) ...[
+            const SizedBox(height: 12),
+            Semantics(
+              liveRegion: true,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.errorContainer,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.error.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.cloud_off_outlined, size: 18, color: AppColors.error),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        hostStatus,
+                        style: TextStyle(fontFamily: 'Poppins', fontSize: 11, color: _primaryText, height: 1.35),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           _buildPairingMethodSwitch(),
           const SizedBox(height: 16),
 

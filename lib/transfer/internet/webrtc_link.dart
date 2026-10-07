@@ -17,15 +17,24 @@ import 'peerjs_signaling.dart';
 /// Backpressure: when `bufferedAmount` rises above [highWaterMark], [send] waits for the
 /// `bufferedamountlow` event (threshold [lowWaterMark]) before letting the caller continue.
 class DataChannelFrameChannel implements FrameChannel {
-  DataChannelFrameChannel(this.pc, this.dc, {this.highWaterMark = 1024 * 1024, this.lowWaterMark = 256 * 1024}) {
+  DataChannelFrameChannel(
+    this.pc,
+    this.dc, {
+    this.highWaterMark = 1024 * 1024,
+    this.lowWaterMark = 256 * 1024,
+  }) {
     dc.bufferedAmountLowThreshold = lowWaterMark;
     dc.onBufferedAmountLow = (_) => _wakeSenders();
     dc.onMessage = (m) {
       if (_incoming.isClosed) return;
-      _incoming.add(m.isBinary ? m.binary : Uint8List.fromList(utf8.encode(m.text)));
+      _incoming.add(
+        m.isBinary ? m.binary : Uint8List.fromList(utf8.encode(m.text)),
+      );
     };
     dc.onDataChannelState = (s) {
-      if (s == RTCDataChannelState.RTCDataChannelClosed || s == RTCDataChannelState.RTCDataChannelClosing) {
+      debugPrint('[QuickShare] WebRTC data channel state: $s');
+      if (s == RTCDataChannelState.RTCDataChannelClosed ||
+          s == RTCDataChannelState.RTCDataChannelClosing) {
         _shutdown();
       }
     };
@@ -84,7 +93,11 @@ class DataChannelFrameChannel implements FrameChannel {
       final waiter = Completer<void>();
       _waiters.add(waiter);
       // The event is the fast path; the poll guards against a missed event.
-      await Future.any([waiter.future, closed, Future<void>.delayed(const Duration(milliseconds: 30))]);
+      await Future.any([
+        waiter.future,
+        closed,
+        Future<void>.delayed(const Duration(milliseconds: 30)),
+      ]);
       if ((dc.bufferedAmount ?? 0) > highWaterMark) {
         try {
           await dc.getBufferedAmount();
@@ -134,8 +147,12 @@ List<String> sdpFingerprints(String? sdp) {
 /// certificates, i.e. nobody (not even the signaling server) is in the middle.
 String fingerprintCode(String localFingerprint, String remoteFingerprint) {
   final pair = [localFingerprint, remoteFingerprint]..sort();
-  final digest = sha256.convert(utf8.encode('quickshare-sas-v1|${pair.join('|')}')).bytes;
-  final n = ((digest[0] << 24) | (digest[1] << 16) | (digest[2] << 8) | digest[3]) & 0x7FFFFFFF;
+  final digest = sha256
+      .convert(utf8.encode('quickshare-sas-v1|${pair.join('|')}'))
+      .bytes;
+  final n =
+      ((digest[0] << 24) | (digest[1] << 16) | (digest[2] << 8) | digest[3]) &
+      0x7FFFFFFF;
   return (n % 10000).toString().padLeft(4, '0');
 }
 
@@ -148,27 +165,50 @@ class InternetConnection {
   String get verificationCode => channel.verificationCode;
 }
 
-Future<RTCPeerConnection> _newPeerConnection(AppConfig config, {bool forceRelay = false}) async {
+Future<RTCPeerConnection> _newPeerConnection(
+  AppConfig config, {
+  bool forceRelay = false,
+}) async {
   final relayOnly = forceRelay || config.forceRelay;
-  final servers = relayOnly ? config.iceServers(turnOnly: true) : config.stunServers;
-  return createPeerConnection({
-    'iceServers': [for (final s in servers) s.toMap()],
-    'iceTransportPolicy': relayOnly ? 'relay' : 'all',
-    'sdpSemantics': 'unified-plan',
-  });
+  final servers = relayOnly
+      ? config.iceServers(turnOnly: true)
+      : config.iceServers();
+  try {
+    return await createPeerConnection({
+      'iceServers': [for (final s in servers) s.toMap()],
+      'iceTransportPolicy': relayOnly ? 'relay' : 'all',
+      'sdpSemantics': 'unified-plan',
+    });
+  } catch (e) {
+    debugPrint(
+      '[QuickShare] Native WebRTC peer-connection creation failed (relayOnly=$relayOnly): $e',
+    );
+    final message = e.toString().toLowerCase();
+    if (message.contains('libwebrtc') ||
+        message.contains('missing') ||
+        message.contains('plugin') ||
+        message.contains('library') ||
+        message.contains('cannot open shared object')) {
+      throw ConnectException(
+        ConnectFailure.signalingUnavailable,
+        'WebRTC native library could not be loaded. Ensure required system libraries (GTK, ALSA, PulseAudio) are installed: $e',
+      );
+    }
+    rethrow;
+  }
 }
 
 Map<String, dynamic> _candidateJson(RTCIceCandidate c) => {
-      'candidate': c.candidate,
-      'sdpMid': c.sdpMid,
-      'sdpMLineIndex': c.sdpMLineIndex,
-    };
+  'candidate': c.candidate,
+  'sdpMid': c.sdpMid,
+  'sdpMLineIndex': c.sdpMLineIndex,
+};
 
 RTCIceCandidate _candidateFrom(Map<String, dynamic> c) => RTCIceCandidate(
-      c['candidate']?.toString(),
-      c['sdpMid']?.toString(),
-      (c['sdpMLineIndex'] as num?)?.toInt(),
-    );
+  c['candidate']?.toString(),
+  c['sdpMid']?.toString(),
+  (c['sdpMLineIndex'] as num?)?.toInt(),
+);
 
 /// Applies remote candidates only after the remote description is set.
 class _CandidateBuffer {
@@ -188,7 +228,11 @@ class _CandidateBuffer {
     }
     try {
       await pc.addCandidate(c);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint(
+        '[QuickShare] Could not apply remote ICE candidate type=$candType: $e',
+      );
+    }
   }
 
   Future<void> flush() async {
@@ -196,7 +240,14 @@ class _CandidateBuffer {
     for (final c in _pending) {
       try {
         await pc.addCandidate(c);
-      } catch (_) {}
+      } catch (e) {
+        final candidate = c.candidate ?? '';
+        final type =
+            RegExp(r'typ (\w+)').firstMatch(candidate)?.group(1) ?? 'unknown';
+        debugPrint(
+          '[QuickShare] Could not apply buffered ICE candidate type=$type: $e',
+        );
+      }
     }
     _pending.clear();
   }
@@ -208,7 +259,8 @@ bool _pairUsesRelay(Map<String, StatsReport> byId, StatsReport? pair) {
   if (pair == null) return false;
   final local = byId[pair.values['localCandidateId']];
   final remote = byId[pair.values['remoteCandidateId']];
-  return local?.values['candidateType'] == 'relay' || remote?.values['candidateType'] == 'relay';
+  return local?.values['candidateType'] == 'relay' ||
+      remote?.values['candidateType'] == 'relay';
 }
 
 Future<bool> _isRelayed(RTCPeerConnection pc) async {
@@ -216,12 +268,15 @@ Future<bool> _isRelayed(RTCPeerConnection pc) async {
     final stats = await pc.getStats();
     final byId = {for (final r in stats) r.id: r};
     for (final r in stats) {
-      if (r.type == 'transport' && r.values['selectedCandidatePairId'] != null) {
+      if (r.type == 'transport' &&
+          r.values['selectedCandidatePairId'] != null) {
         return _pairUsesRelay(byId, byId[r.values['selectedCandidatePairId']]);
       }
     }
     for (final r in stats) {
-      if (r.type == 'candidate-pair' && (r.values['nominated'] == true || r.values['selected'] == true) && r.values['state'] == 'succeeded') {
+      if (r.type == 'candidate-pair' &&
+          (r.values['nominated'] == true || r.values['selected'] == true) &&
+          r.values['state'] == 'succeeded') {
         return _pairUsesRelay(byId, r);
       }
     }
@@ -229,7 +284,10 @@ Future<bool> _isRelayed(RTCPeerConnection pc) async {
   return false;
 }
 
-Future<void> _bindVerification(RTCPeerConnection pc, DataChannelFrameChannel channel) async {
+Future<void> _bindVerification(
+  RTCPeerConnection pc,
+  DataChannelFrameChannel channel,
+) async {
   final local = sdpFingerprints((await pc.getLocalDescription())?.sdp);
   final remote = sdpFingerprints((await pc.getRemoteDescription())?.sdp);
   channel.verificationCode = fingerprintCode(local.join(','), remote.join(','));
@@ -238,8 +296,10 @@ Future<void> _bindVerification(RTCPeerConnection pc, DataChannelFrameChannel cha
 
 /// Binding of the handshake proof to this exact DTLS session.
 Future<String> _sessionBinding(RTCPeerConnection pc) async {
-  final local = sdpFingerprints((await pc.getLocalDescription())?.sdp).join(',');
-  final remote = sdpFingerprints((await pc.getRemoteDescription())?.sdp).join(',');
+  final local = sdpFingerprints((await pc.getLocalDescription())?.sdp)
+      .join(',');
+  final remote = sdpFingerprints((await pc.getRemoteDescription())?.sdp)
+      .join(',');
   return ([local, remote]..sort()).join('|');
 }
 
@@ -266,7 +326,9 @@ Future<InternetConnection> connectToPeer({
       throw lastError ??
           ConnectException(
             ConnectFailure.noRoute,
-            forceRelay ? 'TURN relay connection timed out.' : 'Internet connection timed out.',
+            forceRelay
+                ? 'TURN relay connection timed out.'
+                : 'Internet connection timed out.',
           );
     }
     final attemptToken = CancelToken();
@@ -289,7 +351,9 @@ Future<InternetConnection> connectToPeer({
       return await Future.any([
         attempt,
         timer,
-        token.whenCancelled.then<InternetConnection>((_) => throw CancelledException()),
+        token.whenCancelled.then<InternetConnection>(
+          (_) => throw CancelledException(),
+        ),
       ]);
     } catch (e) {
       await attemptToken.cancel();
@@ -303,7 +367,9 @@ Future<InternetConnection> connectToPeer({
       }
       lastError = e;
       if (iceRetries < maxIceRetries && DateTime.now().isBefore(deadline)) {
-        debugPrint('[QuickShare] ICE attempt failed ($e). Auto-retrying ICE (${iceRetries + 1}/$maxIceRetries)...');
+        debugPrint(
+          '[QuickShare] ICE attempt failed ($e). Auto-retrying ICE (${iceRetries + 1}/$maxIceRetries)...',
+        );
         await Future.any([
           Future<void>.delayed(const Duration(milliseconds: 300)),
           token.whenCancelled.then((_) => throw CancelledException()),
@@ -325,12 +391,19 @@ Future<InternetConnection> _connectToPeerAttempt({
   bool forceRelay = false,
   Duration? timeout,
 }) async {
-  debugPrint('[QuickShare] Joiner connecting to target peer ID: $targetPeerId (mode: $mode, forceRelay: $forceRelay)');
-  final signaling = PeerJsSignaling(config: config, peerId: PeerJsSignaling.randomSenderId());
+  debugPrint(
+    '[QuickShare] Joiner connecting to target peer ID: $targetPeerId (mode: $mode, forceRelay: $forceRelay)',
+  );
+  final signaling = PeerJsSignaling(
+    config: config,
+    peerId: PeerJsSignaling.randomSenderId(),
+  );
   token.onCancel(signaling.close);
   try {
     await signaling.open();
-    debugPrint('[QuickShare] Joiner signaling connected to ${config.peerServerHost}');
+    debugPrint(
+      '[QuickShare] Joiner signaling connected to ${config.peerServerHost}',
+    );
   } on SignalingException catch (e) {
     debugPrint('[QuickShare] Signaling exception during connect: ${e.message}');
     if (token.isCancelled) throw CancelledException();
@@ -347,7 +420,12 @@ Future<InternetConnection> _connectToPeerAttempt({
     if (!established) await pc.close();
   });
   final connectionId = 'dc_${PeerJsSignaling.randomSenderId().substring(5)}';
-  final dc = await pc.createDataChannel(connectionId, RTCDataChannelInit()..ordered = true..binaryType = 'binary');
+  final dc = await pc.createDataChannel(
+    connectionId,
+    RTCDataChannelInit()
+      ..ordered = true
+      ..binaryType = 'binary',
+  );
   final channel = DataChannelFrameChannel(pc, dc);
   final frames = StreamQueue(channel.frames);
   final candidates = _CandidateBuffer(pc);
@@ -360,28 +438,42 @@ Future<InternetConnection> _connectToPeerAttempt({
       final typeMatch = RegExp(r'typ (\w+)').firstMatch(cand);
       final candType = typeMatch?.group(1) ?? 'unknown';
       debugPrint('[QuickShare] Joiner ICE candidate generated: type=$candType');
-      signaling.sendCandidate(targetPeerId, connectionId: connectionId, candidate: _candidateJson(c));
+      signaling.sendCandidate(
+        targetPeerId,
+        connectionId: connectionId,
+        candidate: _candidateJson(c),
+      );
     }
   };
   pc.onIceConnectionState = (s) {
     debugPrint('[QuickShare] Joiner ICE state: $s (forceRelay: $forceRelay)');
-    if (s == RTCIceConnectionState.RTCIceConnectionStateFailed && !opened.isCompleted) {
-      debugPrint('[QuickShare] Joiner ICE state failed/disconnected with target $targetPeerId');
-      opened.completeError(ConnectException(
-        ConnectFailure.noRoute,
-        forceRelay
-            ? "TURN relay connection failed (ICE $s)."
-            : (config.hasTurn
-                ? "The devices found each other but direct connection failed (ICE $s)."
-                : "Strict networks block direct connection (ICE $s)."),
-      ));
-    } else if (s == RTCIceConnectionState.RTCIceConnectionStateDisconnected && !opened.isCompleted) {
+    if (s == RTCIceConnectionState.RTCIceConnectionStateFailed &&
+        !opened.isCompleted) {
+      debugPrint(
+        '[QuickShare] Joiner ICE state failed/disconnected with target $targetPeerId',
+      );
+      opened.completeError(
+        ConnectException(
+          ConnectFailure.noRoute,
+          forceRelay
+              ? "TURN relay connection failed (ICE $s)."
+              : (config.hasTurn
+                    ? "The devices found each other but direct connection failed (ICE $s)."
+                    : "Strict networks block direct connection (ICE $s)."),
+        ),
+      );
+    } else if (s == RTCIceConnectionState.RTCIceConnectionStateDisconnected &&
+        !opened.isCompleted) {
       disconnectedTimer ??= Timer(const Duration(seconds: 2), () {
         if (!opened.isCompleted) {
-          opened.completeError(ConnectException(
-            ConnectFailure.noRoute,
-            forceRelay ? 'TURN relay connection disconnected.' : 'Internet connection disconnected.',
-          ));
+          opened.completeError(
+            ConnectException(
+              ConnectFailure.noRoute,
+              forceRelay
+                  ? 'TURN relay connection disconnected.'
+                  : 'Internet connection disconnected.',
+            ),
+          );
         }
       });
     } else if (s == RTCIceConnectionState.RTCIceConnectionStateConnected ||
@@ -397,22 +489,33 @@ Future<InternetConnection> _connectToPeerAttempt({
   final closeHandler = dc.onDataChannelState;
   dc.onDataChannelState = (s) {
     debugPrint('[QuickShare] Joiner DataChannel state: $s');
-    if (s == RTCDataChannelState.RTCDataChannelOpen && !opened.isCompleted) opened.complete();
+    if (s == RTCDataChannelState.RTCDataChannelOpen && !opened.isCompleted) {
+      opened.complete();
+    }
     closeHandler?.call(s);
   };
 
   final sub = signaling.messages.listen((m) async {
     if (m.type == 'EXPIRE' && m.src == targetPeerId && !opened.isCompleted) {
-      debugPrint('[QuickShare] PeerJS returned EXPIRE for $targetPeerId (host not online)');
-      opened.completeError(ConnectException(
-        ConnectFailure.wrongCode,
-        'No device is online with that code. Check the code, or ask for a new one if it expired.',
-      ));
-    } else if (m.type == 'ANSWER' && m.connectionId == connectionId && m.sdp != null) {
+      debugPrint(
+        '[QuickShare] PeerJS returned EXPIRE for $targetPeerId (host not online)',
+      );
+      opened.completeError(
+        ConnectException(
+          ConnectFailure.wrongCode,
+          'The code is not registered with PeerJS. On the receiving device, check the Internet pairing status below its code, then retry or ask for a new code.',
+        ),
+      );
+    } else if (m.type == 'ANSWER' &&
+        m.connectionId == connectionId &&
+        m.sdp != null) {
       debugPrint('[QuickShare] Received answer SDP from $targetPeerId');
       await pc.setRemoteDescription(RTCSessionDescription(m.sdp, 'answer'));
+      debugPrint('[QuickShare] Applied ANSWER SDP from $targetPeerId.');
       await candidates.flush();
-    } else if (m.type == 'CANDIDATE' && m.connectionId == connectionId && m.candidate != null) {
+    } else if (m.type == 'CANDIDATE' &&
+        m.connectionId == connectionId &&
+        m.candidate != null) {
       final cand = m.candidate!['candidate']?.toString() ?? '';
       final typeMatch = RegExp(r'typ (\w+)').firstMatch(cand);
       final candType = typeMatch?.group(1) ?? 'unknown';
@@ -424,7 +527,14 @@ Future<InternetConnection> _connectToPeerAttempt({
 
   final offer = await pc.createOffer({});
   await pc.setLocalDescription(offer);
-  signaling.sendOffer(targetPeerId, connectionId: connectionId, sdp: offer.sdp!);
+  signaling.sendOffer(
+    targetPeerId,
+    connectionId: connectionId,
+    sdp: offer.sdp!,
+  );
+  debugPrint(
+    '[QuickShare] Sent OFFER to $targetPeerId (connectionId: $connectionId, relayOnly: $forceRelay).',
+  );
 
   try {
     await Future.any([
@@ -440,8 +550,8 @@ Future<InternetConnection> _connectToPeerAttempt({
       forceRelay
           ? 'Connecting via TURN relay took too long.'
           : (config.hasTurn
-              ? 'Connecting took too long. The networks may block it; try again or use the same Wi-Fi.'
-              : 'Connecting took too long. Strict networks need a TURN relay; try again or use the same Wi-Fi.'),
+                ? 'Connecting took too long. The networks may block it; try again or use the same Wi-Fi.'
+                : 'Connecting took too long. Strict networks need a TURN relay; try again or use the same Wi-Fi.'),
     );
   } catch (_) {
     disconnectedTimer?.cancel();
@@ -452,8 +562,17 @@ Future<InternetConnection> _connectToPeerAttempt({
 
   try {
     final binding = await _sessionBinding(pc);
-    final remote = await initiateHandshake(channel, frames, me, mode: mode, prove: (nonce) => computeProof(secret, nonce, binding));
+    final remote = await initiateHandshake(
+      channel,
+      frames,
+      me,
+      mode: mode,
+      prove: (nonce) => computeProof(secret, nonce, binding),
+    );
     await _bindVerification(pc, channel);
+    debugPrint(
+      '[QuickShare] WebRTC path selected: ${channel.relayed ? 'Relay' : 'Direct'}.',
+    );
     established = true;
     return InternetConnection(channel, frames, remote);
   } on HandshakeException catch (e) {
@@ -474,6 +593,8 @@ class InternetHost {
     required this.me,
     required this.verify,
     required this.onConnection,
+    this.onRegistered,
+    this.onSignalingError,
     this.onFailedAttempt,
   });
 
@@ -482,41 +603,79 @@ class InternetHost {
   final LocalIdentity me;
 
   /// Checks the sender's proof; returns the resume id to hand out or throws HandshakeException.
-  final String Function(String mode, String proof, String nonce, String binding) verify;
+  final String Function(String mode, String proof, String nonce, String binding)
+  verify;
   final void Function(InternetConnection connection) onConnection;
+  final void Function()? onRegistered;
+  final void Function(Object error)? onSignalingError;
 
   /// Called after a failed handshake (wrong proof / protocol abuse).
   final void Function(HandshakeException error)? onFailedAttempt;
 
   PeerJsSignaling? _signaling;
   final Map<String, RTCPeerConnection> _pending = {};
+  Timer? _reconnectTimer;
+  Timer? _stableTimer;
+  int _reconnectAttempt = 0;
   bool _stopped = false;
 
   bool get isListening => _signaling?.isOpen ?? false;
 
+  void _scheduleReconnect(Object reason) {
+    if (_stopped || (_reconnectTimer?.isActive ?? false)) return;
+    final seconds = _reconnectAttempt >= 4 ? 30 : 2 * (1 << _reconnectAttempt);
+    _reconnectAttempt = _reconnectAttempt < 5 ? _reconnectAttempt + 1 : 5;
+    debugPrint(
+      '[QuickShare] Host signaling retry in ${seconds}s (attempt $_reconnectAttempt): $reason',
+    );
+    _reconnectTimer = Timer(Duration(seconds: seconds), () {
+      _reconnectTimer = null;
+      if (!_stopped) {
+        start().catchError((e) {
+          debugPrint('[QuickShare] Host auto-reconnect failed: $e');
+        });
+      }
+    });
+  }
+
   Future<void> start() async {
+    if (_stopped || isListening) return;
     final signaling = PeerJsSignaling(config: config, peerId: peerId);
     _signaling = signaling;
-    await signaling.open();
+    try {
+      await signaling.open();
+      debugPrint(
+        '[QuickShare] Host signaling connected to ${config.peerServerHost}:${config.peerServerPort}.',
+      );
+    } catch (e) {
+      onSignalingError?.call(e);
+      _scheduleReconnect(e);
+      rethrow;
+    }
     if (_stopped) {
       await signaling.close();
       return;
     }
-    debugPrint('[QuickShare] Host registered successfully with PeerJS ID: $peerId');
+    debugPrint(
+      '[QuickShare] Host registered successfully with PeerJS ID: $peerId',
+    );
+    onRegistered?.call();
+    _stableTimer?.cancel();
+    _stableTimer = Timer(const Duration(seconds: 30), () {
+      if (signaling.isOpen) _reconnectAttempt = 0;
+    });
 
     // Keep host online while Ready to Receive: auto-reconnect if signaling drops
-    unawaited(signaling.closed.then((_) {
-      if (!_stopped) {
-        debugPrint('[QuickShare] Host signaling dropped for peer $peerId. Reconnecting in 2 seconds...');
-        Timer(const Duration(seconds: 2), () {
-          if (!_stopped) {
-            start().catchError((e) {
-              debugPrint('[QuickShare] Host auto-reconnect error: $e');
-            });
-          }
-        });
-      }
-    }));
+    unawaited(
+      signaling.closed.then((_) {
+        _stableTimer?.cancel();
+        _stableTimer = null;
+        if (identical(_signaling, signaling)) _signaling = null;
+        if (!_stopped) {
+          _scheduleReconnect('signaling connection closed');
+        }
+      }),
+    );
 
     final buffers = <String, _CandidateBuffer>{};
     signaling.messages.listen((m) async {
@@ -524,9 +683,19 @@ class InternetHost {
       final src = m.src;
       if (id == null || src == null || _stopped) return;
       if (m.type == 'OFFER' && m.sdp != null && !_pending.containsKey(id)) {
-        debugPrint('[QuickShare] Host received incoming connection offer from $src (connectionId: $id)');
-        if (_pending.length >= 4) return; // a burst of strangers; ignore the excess
-        final pc = await _newPeerConnection(config);
+        debugPrint(
+          '[QuickShare] Host received OFFER from $src (connectionId: $id)',
+        );
+        if (_pending.length >= 4) {
+          return; // a burst of strangers; ignore the excess
+        }
+        late final RTCPeerConnection pc;
+        try {
+          pc = await _newPeerConnection(config);
+        } catch (e) {
+          onSignalingError?.call(e);
+          return;
+        }
         _pending[id] = pc;
         final buffer = buffers[id] = _CandidateBuffer(pc);
         Timer? disconnectedTimer;
@@ -535,8 +704,14 @@ class InternetHost {
             final cand = c.candidate!;
             final typeMatch = RegExp(r'typ (\w+)').firstMatch(cand);
             final candType = typeMatch?.group(1) ?? 'unknown';
-            debugPrint('[QuickShare] Host generated ICE candidate: type=$candType');
-            signaling.sendCandidate(src, connectionId: id, candidate: _candidateJson(c));
+            debugPrint(
+              '[QuickShare] Host generated ICE candidate: type=$candType',
+            );
+            signaling.sendCandidate(
+              src,
+              connectionId: id,
+              candidate: _candidateJson(c),
+            );
           }
         };
         pc.onIceConnectionState = (s) {
@@ -544,9 +719,14 @@ class InternetHost {
           if (s == RTCIceConnectionState.RTCIceConnectionStateFailed) {
             disconnectedTimer?.cancel();
             _closePending(id, pc, buffers);
-          } else if (s == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
-            disconnectedTimer ??= Timer(const Duration(seconds: 2), () => _closePending(id, pc, buffers));
-          } else if (s == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+          } else if (s ==
+              RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+            disconnectedTimer ??= Timer(
+              const Duration(seconds: 2),
+              () => _closePending(id, pc, buffers),
+            );
+          } else if (s ==
+                  RTCIceConnectionState.RTCIceConnectionStateConnected ||
               s == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
             disconnectedTimer?.cancel();
             disconnectedTimer = null;
@@ -562,21 +742,29 @@ class InternetHost {
           if (stale != null) stale.close();
         });
         await pc.setRemoteDescription(RTCSessionDescription(m.sdp, 'offer'));
+        debugPrint('[QuickShare] Host applied OFFER SDP from $src.');
         await buffer.flush();
         final answer = await pc.createAnswer({});
         await pc.setLocalDescription(answer);
         signaling.sendAnswer(src, connectionId: id, sdp: answer.sdp!);
+        debugPrint('[QuickShare] Host sent ANSWER to $src.');
       } else if (m.type == 'CANDIDATE' && m.candidate != null) {
         final cand = m.candidate!['candidate']?.toString() ?? '';
         final typeMatch = RegExp(r'typ (\w+)').firstMatch(cand);
         final candType = typeMatch?.group(1) ?? 'unknown';
-        debugPrint('[QuickShare] Host received remote candidate type: $candType');
+        debugPrint(
+          '[QuickShare] Host received remote candidate type: $candType',
+        );
         await buffers[id]?.add(_candidateFrom(m.candidate!));
       }
     });
   }
 
-  void _closePending(String id, RTCPeerConnection pc, Map<String, _CandidateBuffer> buffers) {
+  void _closePending(
+    String id,
+    RTCPeerConnection pc,
+    Map<String, _CandidateBuffer> buffers,
+  ) {
     if (!identical(_pending.remove(id), pc)) return;
     buffers.remove(id);
     unawaited(pc.close());
@@ -603,6 +791,9 @@ class InternetHost {
         );
         probe?.cancel();
         await _bindVerification(pc, channel);
+        debugPrint(
+          '[QuickShare] Host WebRTC path selected: ${channel.relayed ? 'Relay' : 'Direct'}.',
+        );
         _pending.remove(id);
         onConnection(InternetConnection(channel, frames, remote));
       } on HandshakeException catch (e) {
@@ -610,12 +801,13 @@ class InternetHost {
         _pending.remove(id);
         await channel.close();
         if (e.countsAsFailedAttempt) onFailedAttempt?.call(e);
-      } catch (_) {
+      } catch (e) {
         if (!challengeSent && channel.isOpen) {
           // The channel was not open yet (sending throws until it is): try again shortly.
           started = false;
           return;
         }
+        debugPrint('[QuickShare] Host WebRTC handshake failed: $e');
         probe?.cancel();
         _pending.remove(id);
         await channel.close();
@@ -623,6 +815,7 @@ class InternetHost {
     }
 
     dc.onDataChannelState = (s) {
+      debugPrint('[QuickShare] Host data channel state: $s');
       previous?.call(s);
       if (s == RTCDataChannelState.RTCDataChannelOpen) run();
     };
@@ -643,6 +836,8 @@ class InternetHost {
   /// Destroys the peer: the code stops being reachable over the internet immediately.
   Future<void> stop() async {
     _stopped = true;
+    _reconnectTimer?.cancel();
+    _stableTimer?.cancel();
     await _signaling?.close();
     _signaling = null;
     for (final pc in _pending.values) {

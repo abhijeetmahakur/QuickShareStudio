@@ -44,6 +44,9 @@ class TransferItem {
   /// Real transfers: how the bytes travel (null in demo mode).
   final TransferMethod? method;
 
+  /// True when WebRTC selected a TURN relay for the active peer connection.
+  final bool relayed;
+
   /// Interrupted by a lost connection and can continue where it stopped.
   final bool resumable;
   final Duration? eta;
@@ -71,6 +74,7 @@ class TransferItem {
     this.connectionType = 'Local Network',
     this.rawBytes,
     this.method,
+    this.relayed = false,
     this.resumable = false,
     this.eta,
     this.fileCount = 1,
@@ -88,6 +92,7 @@ class TransferItem {
     int? pageCount,
     String? connectionType,
     Uint8List? rawBytes,
+    bool? relayed,
     bool? resumable,
     Duration? eta,
     bool clearEta = false,
@@ -114,6 +119,7 @@ class TransferItem {
       connectionType: connectionType ?? this.connectionType,
       rawBytes: rawBytes ?? this.rawBytes,
       method: method,
+      relayed: relayed ?? this.relayed,
       resumable: resumable ?? this.resumable,
       eta: clearEta ? null : (eta ?? this.eta),
       fileCount: fileCount,
