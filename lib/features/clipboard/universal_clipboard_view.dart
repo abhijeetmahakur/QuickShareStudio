@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../core/services/clipboard_image_service.dart';
+import '../../core/utils/format_utils.dart';
 import '../../core/widgets/demo_mode_notice.dart';
 import 'package:provider/provider.dart';
 import '../../data/models/device_model.dart';
@@ -22,24 +26,57 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
   bool _isSending = false;
   final Map<String, String> _deliveryStatuses = {};
 
+  /// A screenshot or copied picture (PNG). When set it is sent instead of the text.
+  Uint8List? _image;
+
+  // False while another section of the dashboard is showing.
+  bool _isVisible = true;
+
   @override
   void initState() {
     super.initState();
     _textController = TextEditingController();
+    HardwareKeyboard.instance.addHandler(_handleKeyboard);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyboard);
     _textController.dispose();
     super.dispose();
+  }
+
+  /// Ctrl+V outside the text box pastes whatever is on the clipboard: an image or text.
+  /// (Inside the text box, Ctrl+V / Ctrl+C / Ctrl+X are the normal text shortcuts.)
+  bool _handleKeyboard(KeyEvent event) {
+    if (kIsWeb || !_isVisible || !mounted || event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.keyV) return false;
+    final keys = HardwareKeyboard.instance;
+    if (!(keys.isControlPressed || keys.isMetaPressed) || keys.isAltPressed) return false;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return false;
+    final focus = FocusManager.instance.primaryFocus;
+    if (focus?.context?.findAncestorWidgetOfExactType<EditableText>() != null) return false;
+    if (!_isReading) unawaited(_readClipboard());
+    return true;
   }
 
   Future<void> _readClipboard() async {
     setState(() => _isReading = true);
     try {
+      // A screenshot on the clipboard has no text, so look for an image first.
+      final image = await ClipboardImageService.readImageBytes();
+      if (image != null) {
+        setState(() {
+          _image = image;
+          _isReading = false;
+          _deliveryStatuses.clear();
+        });
+        return;
+      }
       final data = await Clipboard.getData(Clipboard.kTextPlain);
       final text = data?.text ?? '';
       setState(() {
+        _image = null;
         _textController.text = text;
         _isReading = false;
       });
@@ -73,7 +110,9 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
   Future<void> _sendClipboardContent() async {
     final engine = context.read<TransferEngine>();
     final content = _textController.text; // Preserve exact indentation, code formatting, and spaces
-    if (content.trim().isEmpty) {
+    final image = _image;
+    final what = image != null ? 'image' : 'text';
+    if (image == null && content.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: AppColors.cardBg,
@@ -104,8 +143,9 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
     });
 
     // Exact UTF-8 byte encoding guarantees 100% preservation of code, symbols, indentations, and emojis
-    final bytes = Uint8List.fromList(utf8.encode(content));
+    final bytes = image ?? Uint8List.fromList(utf8.encode(content));
     final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final fileName = image != null ? 'Clipboard_Image_$timestamp.png' : 'Clipboard_Snippet_$timestamp.txt';
     final List<String> succeededNames = [];
     final List<String> failedNames = [];
 
@@ -122,7 +162,7 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
         setState(() {});
 
         final transfer = await engine.sendFileToDevice(
-          fileName: 'Clipboard_Snippet_$timestamp.txt',
+          fileName: fileName,
           bytes: bytes,
           recipient: dev,
         );
@@ -152,7 +192,7 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Clipboard text sent to ${succeededNames.first}.',
+                    'Clipboard $what sent to ${succeededNames.first}.',
                     style: TextStyle(fontFamily: 'Poppins', color: AppColors.primaryText, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -170,7 +210,7 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Clipboard text sent to all ${succeededNames.length} selected devices.',
+                    'Clipboard $what sent to all ${succeededNames.length} selected devices.',
                     style: TextStyle(fontFamily: 'Poppins', color: AppColors.primaryText, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -193,7 +233,7 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
           SnackBar(
             backgroundColor: AppColors.surfaceElevated,
             content: Text(
-              'Failed to send clipboard text to: ${failedNames.join(", ")}',
+              'Failed to send clipboard $what to: ${failedNames.join(", ")}',
               style: TextStyle(fontFamily: 'Poppins', color: AppColors.error),
             ),
           ),
@@ -204,6 +244,7 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
 
   @override
   Widget build(BuildContext context) {
+    _isVisible = TickerMode.valuesOf(context).enabled;
     final engine = context.watch<TransferEngine>();
 
     // Auto-select first paired device if none currently selected
@@ -253,7 +294,8 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                       const SizedBox(width: 14),
                       Expanded(
                         child: Text(
-                          'Clipboard Sharing requires your explicit approval for every transmission. Text and code formatting are preserved with high fidelity.',
+                          'Clipboard Sharing requires your explicit approval for every transmission. Text and code formatting are preserved '
+                          'with high fidelity; copied images and screenshots are sent as PNG. Press Ctrl+V on this page to paste.',
                           style: TextStyle(
                             fontFamily: 'Poppins',
                             fontSize: 12,
@@ -317,6 +359,7 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                       onPressed: () {
                         setState(() {
                           _textController.clear();
+                          _image = null;
                           _deliveryStatuses.clear();
                         });
                       },
@@ -340,7 +383,7 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                         children: [
                           Expanded(
                             child: Text(
-                              'Content Preview (Text & Code Formatting Preserved):',
+                              _image != null ? 'Image Preview (sent as PNG):' : 'Content Preview (Text & Code Formatting Preserved):',
                               style: TextStyle(
                                 fontFamily: 'Poppins',
                                 fontWeight: FontWeight.w600,
@@ -352,7 +395,9 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            '${_textController.text.length} chars · ${_textController.text.split("\n").length} lines',
+                            _image != null
+                                ? FormatUtils.formatBytes(_image!.length)
+                                : '${_textController.text.length} chars · ${_textController.text.split("\n").length} lines',
                             style: TextStyle(
                               fontFamily: 'Poppins',
                               fontSize: 11.5,
@@ -362,6 +407,27 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                         ],
                       ),
                       const SizedBox(height: 12),
+                      if (_image != null) ...[
+                        Container(
+                          key: const Key('clipboard_image_preview'),
+                          width: double.infinity,
+                          constraints: const BoxConstraints(maxHeight: 260),
+                          decoration: BoxDecoration(
+                            color: AppColors.dashboardBg,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.subtleBorderLight),
+                          ),
+                          padding: const EdgeInsets.all(8),
+                          child: Image.memory(_image!, fit: BoxFit.contain, gaplessPlayback: true),
+                        ),
+                        const SizedBox(height: 8),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(foregroundColor: AppColors.secondaryText),
+                          icon: const Icon(Icons.text_fields_rounded, size: 16),
+                          label: const Text('Remove image and type text instead', style: TextStyle(fontFamily: 'Poppins', fontSize: 12)),
+                          onPressed: () => setState(() => _image = null),
+                        ),
+                      ] else
                       TextField(
                         controller: _textController,
                         maxLines: 10,
@@ -626,7 +692,7 @@ class _UniversalClipboardViewState extends State<UniversalClipboardView> {
                         fontSize: 14,
                       ),
                     ),
-                    onPressed: (_textController.text.trim().isNotEmpty &&
+                    onPressed: ((_image != null || _textController.text.trim().isNotEmpty) &&
                             _selectedDeviceIds.isNotEmpty &&
                             !_isSending)
                         ? _sendClipboardContent

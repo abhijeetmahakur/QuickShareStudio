@@ -10,6 +10,10 @@ import 'platform_updater.dart';
 /// its own files.
 bool get canSelfUpdate => true;
 
+/// The legacy browser bundle. Releases no longer publish it, so these copies are sent to
+/// the release page to install the native Linux app once.
+String get linuxAssetName => 'QuickShareStudio-Linux.tar.gz';
+
 Uri _api(String path) => Uri.base.resolve(path);
 
 Future<InstallResult> downloadAndInstall(AppUpdateInfo update, void Function(double progress) onProgress) async {

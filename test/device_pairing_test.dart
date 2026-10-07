@@ -420,12 +420,14 @@ void main() {
       expect(find.text('Scan Pairing QR Code'), findsOneWidget);
       expect(find.text('Scan with Camera'), findsOneWidget);
       expect(find.byKey(const Key('scan_with_camera_button')), findsOneWidget);
+      // Phones can also read a QR code from a saved screenshot.
+      expect(find.byKey(const Key('open_qr_image_button')), findsOneWidget);
       expect(find.byType(TextField), findsNothing);
       expect(find.text('That isn\'t a QuickShare pairing code.'), findsNothing);
       expect(find.text('Pair with QR Code'), findsNothing);
     });
 
-    testWidgets('Linux QR scan panel directs users to the six-digit code', (tester) async {
+    testWidgets('Linux QR scan panel opens a QR image instead of the camera', (tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.linux;
       addTearDown(() => debugDefaultTargetPlatformOverride = null);
       tester.view.physicalSize = const Size(1280, 1500);
@@ -441,8 +443,11 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.text('Use the 6-digit code instead'), findsOneWidget);
+      expect(find.byKey(const Key('desktop_camera_unavailable_hint')), findsOneWidget);
+      expect(find.byKey(const Key('open_qr_image_button')), findsOneWidget);
+      expect(find.text('Open QR image'), findsOneWidget);
       expect(find.text('Scan with Camera'), findsNothing);
+      expect(find.text('Paste QR'), findsNothing);
       debugDefaultTargetPlatformOverride = null;
     });
   });

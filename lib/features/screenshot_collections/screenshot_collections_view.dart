@@ -1,6 +1,13 @@
+import 'dart:async';
+
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../core/services/clipboard_image_service.dart';
+import '../../core/utils/file_utils.dart';
 import '../../data/services/transfer_engine.dart';
 import '../../data/models/screenshot_session_model.dart';
 import '../../data/models/screenshot_item.dart';
@@ -23,10 +30,16 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
   int _currentTab = 0; // 0: Sessions List, 1: Active Workspace
   String? _activeSessionId;
   bool _isExporting = false;
+  bool _isPasting = false;
+  bool _isDropHovering = false;
+
+  // False while another section of the dashboard is showing.
+  bool _isVisible = true;
 
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKeyboard);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         final engine = context.read<TransferEngine>();
@@ -42,6 +55,75 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
         }
       }
     });
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyboard);
+    super.dispose();
+  }
+
+  /// Ctrl+V outside text fields pastes the clipboard screenshot into the open session.
+  bool _handleKeyboard(KeyEvent event) {
+    // On web Ctrl+V must reach the browser; the Paste button reads the clipboard there.
+    if (kIsWeb || !_isVisible || !mounted || event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.keyV) return false;
+    final keys = HardwareKeyboard.instance;
+    if (!(keys.isControlPressed || keys.isMetaPressed) || keys.isAltPressed) return false;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return false;
+    final focus = FocusManager.instance.primaryFocus;
+    if (focus?.context?.findAncestorWidgetOfExactType<EditableText>() != null) return false;
+    unawaited(_pasteScreenshot());
+    return true;
+  }
+
+  /// The open session, creating one when there is none yet.
+  ScreenshotSessionModel _targetSession(TransferEngine engine) {
+    final open = engine.screenshotSessions.where((s) => s.id == _activeSessionId).firstOrNull ??
+        engine.screenshotSessions.firstOrNull ??
+        engine.createScreenshotSession('Lab_Session_1');
+    _activeSessionId = open.id;
+    return open;
+  }
+
+  Future<void> _pasteScreenshot() async {
+    if (_isPasting) return;
+    final engine = context.read<TransferEngine>();
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _isPasting = true);
+    final shot = await ClipboardImageService.readPastedImage();
+    if (!mounted) return;
+    setState(() => _isPasting = false);
+    if (shot == null) {
+      messenger.showSnackBar(SnackBar(content: Text('No image on the clipboard. ${ClipboardImageService.copyHint}')));
+      return;
+    }
+    final session = _targetSession(engine);
+    engine.addScreenshotsToSession(session.id, [shot]);
+    setState(() => _currentTab = 1);
+    messenger.showSnackBar(SnackBar(content: Text('Pasted ${shot.name} into "${session.name}".')));
+  }
+
+  Future<void> _addDroppedImages(DropDoneDetails details) async {
+    final engine = context.read<TransferEngine>();
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _isDropHovering = false);
+    final items = <ScreenshotItem>[];
+    for (final file in details.files) {
+      if (file is DropItemDirectory || !FileUtils.isImageFilename(file.name)) continue;
+      try {
+        items.add(await ScreenshotItem.create(name: file.name, bytes: await file.readAsBytes()));
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    if (items.isEmpty) {
+      messenger.showSnackBar(const SnackBar(content: Text('Drop PNG, JPG, WebP, BMP or GIF images to add them.')));
+      return;
+    }
+    final session = _targetSession(engine);
+    engine.addScreenshotsToSession(session.id, items);
+    setState(() => _currentTab = 1);
+    messenger.showSnackBar(SnackBar(content: Text('Added ${items.length} screenshot(s) to "${session.name}".')));
   }
 
   void _showCreateSessionDialog(BuildContext context, TransferEngine engine) {
@@ -265,6 +347,7 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
 
   @override
   Widget build(BuildContext context) {
+    _isVisible = TickerMode.valuesOf(context).enabled;
     final engine = context.watch<TransferEngine>();
     final activeSession = engine.screenshotSessions.firstWhere(
       (s) => s.id == _activeSessionId,
@@ -285,7 +368,14 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
           const SizedBox(width: 8),
         ],
       ),
-      body: SingleChildScrollView(
+      // Only the visible section takes drops (all visited sections stay mounted).
+      body: DropTarget(
+        enable: !kIsWeb && _isVisible,
+        onDragEntered: (_) => setState(() => _isDropHovering = true),
+        onDragExited: (_) => setState(() => _isDropHovering = false),
+        onDragDone: _addDroppedImages,
+        child: Stack(children: [
+      SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -317,6 +407,26 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
               _buildWorkspaceTab(context, engine, activeSession),
           ],
         ),
+      ),
+          if (_isDropHovering)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  margin: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryAccent.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: AppColors.primaryAccent, width: 2),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    'Drop screenshots to add them to the session',
+                    style: TextStyle(color: AppColors.primaryText, fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                ),
+              ),
+            ),
+        ]),
       ),
     );
   }
@@ -594,6 +704,19 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
                     label: const Text('Add Screenshots', style: TextStyle(fontSize: 12)),
                     onPressed: () => _importScreenshots(context, engine, session),
                   ),
+                  OutlinedButton.icon(
+                    key: const Key('session_paste_button'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primaryAccent,
+                      side: BorderSide(color: AppColors.primaryAccent.withValues(alpha: 0.4)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    icon: _isPasting
+                        ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryAccent))
+                        : const Icon(Icons.content_paste_rounded, size: 16),
+                    label: const Text('Paste (Ctrl+V)', style: TextStyle(fontSize: 12)),
+                    onPressed: _isPasting ? null : _pasteScreenshot,
+                  ),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
@@ -630,7 +753,11 @@ class _ScreenshotCollectionsViewState extends State<ScreenshotCollectionsView> {
                     const SizedBox(height: 12),
                     Text('No screenshots in this session', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.white)),
                     const SizedBox(height: 6),
-                    Text('Click "Add Screenshots" to import lab images and generate your structured PDF.', style: TextStyle(color: AppColors.secondaryText, fontSize: 12)),
+                    Text(
+                      'Add, drop or paste (Ctrl+V) lab screenshots to build your structured PDF.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.secondaryText, fontSize: 12),
+                    ),
                     const SizedBox(height: 16),
                     ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(

@@ -1,4 +1,5 @@
 import '../../core/services/ocr_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -148,6 +149,9 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
   OcrResult? _ocrResult;
   String? _ocrError;
 
+  /// Whether the OCR engine and the chosen language are installed (checked up front).
+  OcrAvailability? _ocrStatus;
+
   // Multi-File Converter Queue State
   final List<ConverterQueueItem> _converterQueue = [];
   bool _isConvertingBatch = false;
@@ -171,7 +175,18 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
+    // Look for the OCR engine only once its tab is opened (it starts a process).
+    _tabController.addListener(() {
+      if (_tabController.index == _ocrTabIndex && _ocrStatus == null) _refreshOcrStatus();
+    });
     _initSplitConfigs();
+  }
+
+  static const _ocrTabIndex = 4;
+
+  Future<void> _refreshOcrStatus() async {
+    final status = await OcrService.availability(OcrService.languages[_ocrLanguage]!);
+    if (mounted) setState(() => _ocrStatus = status);
   }
 
   void _initSplitConfigs() {
@@ -635,7 +650,9 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
       } else {
         images.add(file.bytes);
       }
-      if (mounted) setState(() => _ocrProgress = 'Loading OCR engine (first run downloads it)…');
+      if (mounted) {
+        setState(() => _ocrProgress = kIsWeb ? 'Loading OCR engine (first run downloads it)…' : 'Starting Tesseract…');
+      }
 
       final result = await OcrService.recognize(
         images,
@@ -649,6 +666,13 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
         _isProcessingOcr = false;
         _ocrResult = result;
       });
+    } on OcrUnavailableException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessingOcr = false;
+        _ocrError = e.message;
+      });
+      _refreshOcrStatus();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -2759,9 +2783,47 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
           const SizedBox(height: 6),
           Text(
             'Recognizes text in screenshots and scanned PDFs, and can save a searchable PDF. '
-            'The OCR engine is downloaded on first use, so an internet connection is needed.',
+            '${kIsWeb ? 'The OCR engine is downloaded on first use, so an internet connection is needed.' : 'It runs offline with Tesseract on this device.'}',
             style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
           ),
+          const SizedBox(height: 12),
+          if (_ocrStatus != null && _ocrStatus!.ready && _ocrStatus!.engine != null)
+            Text(
+              'Engine: ${_ocrStatus!.engine}',
+              key: const Key('ocr_engine_ready'),
+              style: TextStyle(color: AppColors.secondaryText, fontSize: 12),
+            ),
+          if (_ocrStatus != null && !_ocrStatus!.ready)
+            Container(
+              key: const Key('ocr_engine_missing'),
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.warningContainer,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.warning.withValues(alpha: 0.5)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Icon(Icons.info_outline_rounded, color: AppColors.warning, size: 18),
+                    const SizedBox(width: 8),
+                    Text('OCR needs one more step', style: TextStyle(color: AppColors.primaryText, fontWeight: FontWeight.w700)),
+                  ]),
+                  const SizedBox(height: 6),
+                  SelectableText(_ocrStatus!.hint ?? '', style: TextStyle(color: AppColors.secondaryText, fontSize: 12.5, height: 1.4)),
+                  if (OcrService.isSupported) ...[
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      icon: const Icon(Icons.refresh_rounded, size: 16),
+                      label: const Text('Check again'),
+                      onPressed: _refreshOcrStatus,
+                    ),
+                  ],
+                ],
+              ),
+            ),
           const SizedBox(height: 20),
 
           ElevatedButton.icon(
@@ -2792,7 +2854,10 @@ class _PdfToolsViewState extends State<PdfToolsView> with SingleTickerProviderSt
               decoration: const InputDecoration(labelText: 'Recognition Language Model', border: OutlineInputBorder(), isDense: true),
               items: OcrService.languages.keys.map((l) => DropdownMenuItem(value: l, child: Text(l))).toList(),
               onChanged: (val) {
-                if (val != null) setState(() => _ocrLanguage = val);
+                if (val != null) {
+                  setState(() => _ocrLanguage = val);
+                  _refreshOcrStatus();
+                }
               },
             ),
             const SizedBox(height: 16),

@@ -1,4 +1,5 @@
 import '../../core/constants.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/widgets/demo_mode_notice.dart';
@@ -11,6 +12,7 @@ import '../../core/utils/format_utils.dart';
 import '../../data/models/transfer_item.dart';
 import '../../transfer/connection_manager.dart';
 import '../../transfer/transfer_method.dart';
+import '../connect/qr_image_decoder.dart';
 import '../connect/qr_scanner_page.dart';
 import '../connect/widgets/code_status_bar.dart';
 import '../connect/widgets/connect_status_panel.dart';
@@ -252,6 +254,40 @@ class _PairingViewState extends State<PairingView> {
     final value = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const QrScannerPage()));
     if (value == null || !mounted) return;
     await _connectWithQrPayload(value);
+  }
+
+  /// Reads the pairing QR from a screenshot or photo (how desktops, which have no camera
+  /// scanner, scan the code shown on the other device).
+  Future<void> _openQrImage() async {
+    final List<PlatformFile> files;
+    try {
+      files = await FilePicker.pickFiles(
+        dialogTitle: 'Open a picture of the QR code',
+        type: FileType.custom,
+        allowedExtensions: const ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'],
+      );
+    } catch (e) {
+      if (mounted) setState(() => _statusError = 'Could not open the file chooser: $e');
+      return;
+    }
+    if (files.isEmpty || !mounted) return;
+    setState(() {
+      _statusError = null;
+      _statusSuccess = null;
+      _isConnecting = true;
+    });
+    String? text;
+    try {
+      text = await QrImageDecoder.decode(await files.first.readAsBytes());
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _isConnecting = false);
+    if (text == null) {
+      setState(() => _statusError =
+          'No QR code found in that picture. Use a screenshot or a sharp photo of the QR code on the other device.');
+      return;
+    }
+    await _connectWithQrPayload(text);
   }
 
   void _handleRegenerate() {
@@ -1144,7 +1180,9 @@ class _PairingViewState extends State<PairingView> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Point your camera at the QR code shown on the other device to pair instantly.',
+                    cameraScanSupported
+                        ? 'Point your camera at the QR code shown on the other device to pair instantly.'
+                        : 'Open a screenshot or photo of the QR code shown on the other device, or use its 6-digit code.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontFamily: 'Poppins',
@@ -1180,11 +1218,46 @@ class _PairingViewState extends State<PairingView> {
                     )
                   else
                     Text(
-                      'Use the 6-digit code instead',
-                      key: const Key('linux_camera_unavailable_hint'),
+                      'No camera scanner on this computer',
+                      key: const Key('desktop_camera_unavailable_hint'),
                       textAlign: TextAlign.center,
                       style: TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w600, color: _softLightGray),
                     ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: cameraScanSupported
+                        ? OutlinedButton.icon(
+                            key: const Key('open_qr_image_button'),
+                            onPressed: _isConnecting ? null : _openQrImage,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _primaryText,
+                              side: BorderSide(color: _borderSubtleLight),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.image_search_rounded, size: 18),
+                            label: const Text(
+                              'Open QR image',
+                              style: TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w700),
+                            ),
+                          )
+                        : ElevatedButton.icon(
+                            key: const Key('open_qr_image_button'),
+                            onPressed: _isConnecting ? null : _openQrImage,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _limeAccent,
+                              foregroundColor: _bgNearBlack,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.image_search_rounded, size: 18),
+                            label: const Text(
+                              'Open QR image',
+                              style: TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                  ),
                 ],
               ),
             ),

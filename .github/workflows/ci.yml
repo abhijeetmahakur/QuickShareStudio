@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "linux-*"]
   pull_request:
     branches: [main]
 
@@ -76,6 +76,32 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter build web --release --wasm --no-web-resources-cdn
+
+  windows-build:
+    name: Windows build and start
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable Developer Mode for symlinks
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -Name "AllowDevelopmentWithoutDevLicense" -PropertyType DWord -Value 1 -Force
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build windows --release
+      - name: The app starts and stays up
+        shell: pwsh
+        run: |
+          $exe = "build\windows\x64\runner\Release\quickshare.exe"
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 15
+          $p.Refresh()
+          if ($p.HasExited) { throw "quickshare.exe exited during startup with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "quickshare.exe started and stayed up for 15 seconds"
 
   android-build:
     name: Android debug build

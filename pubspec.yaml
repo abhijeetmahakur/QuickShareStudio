@@ -62,9 +62,18 @@ dependencies:
   path_provider: ^2.1.6
   web: ^1.1.1
   desktop_drop: ^0.8.0
+  # Linux: D-Bus for the system tray, notifications and "show in folder".
+  dbus: ^0.8.0
+  # Linux: the portal file chooser, wrapped with a zenity/kdialog fallback.
+  file_picker_linux: ^2.0.2
+  # Reads pairing QR codes from image files (desktop has no camera scanner).
+  zxing2: ^0.2.4
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  # Real Linux desktop checks (clipboard, D-Bus, OCR): integration_test/.
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
@@ -98,6 +107,7 @@ flutter:
 
   assets:
     - assets/fonts/
+    - assets/logo.png
 
   fonts:
     - family: Poppins

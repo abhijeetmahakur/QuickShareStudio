@@ -1,5 +1,6 @@
 import '../../core/constants.dart';
 import 'dart:async';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -56,6 +57,9 @@ class _PdfEditorViewState extends State<PdfEditorView> {
 
   // False while another tab of the app shell's IndexedStack is showing.
   bool _isVisible = true;
+
+  // Image files from the file manager are being dragged over the editor (native builds).
+  bool _isDropHovering = false;
 
   // Official Dark Lime Design Palette Tokens
   static Color get scaffoldBg => AppColors.dashboardBg;
@@ -184,6 +188,30 @@ class _PdfEditorViewState extends State<PdfEditorView> {
         }
       }
     } catch (_) {}
+  }
+
+  /// Images dropped from the file manager (Linux and Windows apps; web uses HTML5 drops).
+  Future<void> _addDroppedImageFiles(DropDoneDetails details) async {
+    setState(() => _isDropHovering = false);
+    final items = <ScreenshotItem>[];
+    for (final file in details.files) {
+      if (file is DropItemDirectory || !FileUtils.isImageFilename(file.name)) continue;
+      try {
+        items.add(await ScreenshotItem.create(
+          name: file.name,
+          bytes: await file.readAsBytes(),
+          caption: file.name.replaceAll(RegExp(r'\.[^.]+$'), ''),
+        ));
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    if (items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Drop PNG, JPG, WebP, BMP or GIF images to add them.')),
+      );
+      return;
+    }
+    _addImages(items);
   }
 
   void _saveUndoState() {
@@ -657,7 +685,7 @@ class _PdfEditorViewState extends State<PdfEditorView> {
                             ),
                             SizedBox(height: 2),
                             Text(
-                              'Copy an image (Win+Shift+S / PrtScn), then paste.',
+                              ClipboardImageService.copyHint,
                               style: TextStyle(
                                 fontFamily: 'Poppins',
                                 fontSize: 10,
@@ -1424,7 +1452,36 @@ class _PdfEditorViewState extends State<PdfEditorView> {
               const SizedBox(width: 12),
             ],
           ),
-          body: isDesktop ? _buildDesktopLayout() : _buildMobileLayout(),
+          body: DropTarget(
+            // Every visited section stays mounted: only the visible one takes drops.
+            enable: !kIsWeb && _isVisible,
+            onDragEntered: (_) => setState(() => _isDropHovering = true),
+            onDragExited: (_) => setState(() => _isDropHovering = false),
+            onDragDone: _addDroppedImageFiles,
+            child: Stack(
+              children: [
+                Positioned.fill(child: isDesktop ? _buildDesktopLayout() : _buildMobileLayout()),
+                if (_isDropHovering)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        margin: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: limeAccent.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: limeAccent, width: 2),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          'Drop images to add them to the document',
+                          style: TextStyle(fontFamily: 'Poppins', color: primaryWhite, fontWeight: FontWeight.w700, fontSize: 15),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );

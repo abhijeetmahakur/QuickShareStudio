@@ -1,4 +1,4 @@
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
 
@@ -15,7 +15,9 @@ class FileUtils {
       }
       if (Platform.isMacOS || Platform.isLinux) {
         final home = Platform.environment['HOME'];
-        return home != null ? '$home/Downloads/QuickShare' : '/tmp/QuickShare';
+        if (home == null) return '/tmp/QuickShare';
+        final downloads = (Platform.isLinux ? xdgDownloadDir(home) : null) ?? '$home/Downloads';
+        return '$downloads/QuickShare';
       }
       if (Platform.isAndroid) {
         return '/storage/emulated/0/Download/QuickShare';
@@ -23,6 +25,22 @@ class FileUtils {
     } catch (_) {}
     return 'Downloads/QuickShare';
   }
+  /// The desktop's Downloads folder from ~/.config/user-dirs.dirs (it is localized, e.g.
+  /// ~/Téléchargements), or null when that file does not name one.
+  static String? xdgDownloadDir(String home, {String? userDirs}) {
+    try {
+      final config = Platform.environment['XDG_CONFIG_HOME'] ?? '$home/.config';
+      final text = userDirs ?? File('$config/user-dirs.dirs').readAsStringSync();
+      final match = RegExp(r'^XDG_DOWNLOAD_DIR="([^"]+)"', multiLine: true).firstMatch(text);
+      if (match == null) return null;
+      final dir = match.group(1)!.replaceFirst(r'$HOME', home);
+      // "$HOME/" alone means the desktop has no separate Downloads folder.
+      return dir.isEmpty || dir == home || dir == '$home/' ? null : dir;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Sanitizes invalid filename characters for all operating systems (Windows, macOS, Linux, Android, iOS)
   static String sanitizeFilename(String filename, {String fallback = 'document'}) {
     var clean = filename.trim();

@@ -84,6 +84,16 @@ Future<String> shareFile(Uint8List bytes, String fileName, String? directory) as
   return 'Saved to $path and opened its folder for sharing';
 }
 
+bool get canReveal => true;
+
+Future<Uint8List> readSavedFile(String path) =>
+    throw UnsupportedError('The browser cannot read $path; open it instead.');
+
+Future<String> revealInFolder(String path) async {
+  await _serverAction('reveal-file', path);
+  return 'Opened the folder of "${path.split(RegExp(r'[\\/]')).last}"';
+}
+
 Future<String> openSavedFile(String path) async {
   await _serverAction('open-file', path);
   return 'Opened "${path.split(RegExp(r'[\\/]')).last}"';

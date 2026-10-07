@@ -13,6 +13,9 @@ external JSPromise<_JsOcrResult> _jsOcr(JSArray<JSUint8Array> images, String lan
 
 const bool isSupported = true;
 
+Future<OcrAvailability> availability(String languageCode) async =>
+    const OcrAvailability(ready: true, engine: 'Tesseract.js (downloaded on first use)');
+
 Future<OcrResult> recognize(
   List<Uint8List> images,
   String languageCode,

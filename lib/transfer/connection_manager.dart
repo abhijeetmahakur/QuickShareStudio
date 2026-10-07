@@ -22,6 +22,7 @@ import 'channel.dart';
 import 'connect_flow.dart';
 import 'file_source.dart';
 import 'internet/webrtc_link.dart';
+import 'net_probe.dart';
 import 'protocol/handshake.dart';
 import 'protocol/transfer_protocol.dart';
 import 'secure_channel.dart';
@@ -143,10 +144,13 @@ class ConnectionManager extends ChangeNotifier {
   static Future<bool> _checkOnline() async {
     try {
       final results = await Connectivity().checkConnectivity();
-      return results.any((r) => r != ConnectivityResult.none);
+      if (results.any((r) => r != ConnectivityResult.none)) return true;
     } catch (_) {
       return true; // unknown: let the attempt itself decide
     }
+    // "None" is not always true: Linux NetworkManager reports it for connections it does not
+    // manage (systemd-networkd, iwd, many VMs), which used to skip internet transfers entirely.
+    return hostResolves(AppConfig.current.peerServerHost);
   }
 
   bool get isStarted => _started;

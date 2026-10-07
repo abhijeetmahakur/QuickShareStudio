@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.quickshare.quickshare</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>QuickShare Studio</name>
+  <summary>Share files, clipboard and PDFs between your devices</summary>
+  <description>
+    <p>
+      QuickShare Studio sends files and clipboard text or images between Linux, Windows and Android
+      devices over the same Wi-Fi or across the internet, end-to-end encrypted, after pairing with a
+      6-digit code or a QR code. It also turns screenshots into print-ready PDFs and merges, splits,
+      compresses and OCRs PDFs.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.quickshare.quickshare.desktop</launchable>
+  <url type="homepage">https://github.com/abhijeetmahakur/QuickShareStudio</url>
+  <url type="bugtracker">https://github.com/abhijeetmahakur/QuickShareStudio/issues</url>
+  <developer id="io.github.abhijeetmahakur">
+    <name>Abhijeet Mahakur</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'app/widgets/update_dialog.dart';
 import 'core/services/background_transfers.dart';
+import 'core/services/desktop_integration.dart';
+import 'core/services/transfer_notifications.dart';
 import 'features/connect/widgets/incoming_offer_host.dart';
 import 'transfer/connection_manager.dart';
 import 'transfer/transfer_settings.dart';
@@ -20,6 +22,8 @@ import 'core/constants.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Platform plug-ins that must be in place before any screen uses them.
+  DesktopIntegration.configure();
   // Real device-to-device networking: native builds run their own LAN server; the
   // browser-based desktop app goes through the local launcher server (server.py).
   // Start ConnectionManager immediately so internet pairing (PeerJS) is ready at once
@@ -37,6 +41,7 @@ void main() async {
     await AppUpdateService().checkOnLaunch();
   });
   BackgroundTransferGuard.attach(TransferEngine());
+  TransferNotifications.attach(TransferEngine(), ConnectionManager.instance);
   runApp(
     MultiProvider(
       providers: [
@@ -50,6 +55,8 @@ void main() async {
       child: const QuickShareApp(),
     ),
   );
+  // Tray icon and OS notifications (Linux, Windows); needs the binding to be running.
+  unawaited(DesktopIntegration.start());
 }
 
 /// Lets services show dialogs above whatever screen is open.

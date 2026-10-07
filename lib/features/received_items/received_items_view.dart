@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/services/android_downloads.dart';
+import '../../core/platform/native_channels.dart';
 import '../../core/services/file_actions.dart';
 import '../../core/widgets/demo_mode_notice.dart';
 import 'package:provider/provider.dart';
@@ -597,6 +598,25 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
     );
   }
 
+  /// Puts a received picture on the system clipboard (Universal Clipboard's other half).
+  Future<void> _copyImage(BuildContext context, ReceivedItemModel item, TransferEngine engine) async {
+    final messenger = ScaffoldMessenger.of(context);
+    var bytes = item.bytes.isNotEmpty ? item.bytes : engine.fileDataStore[item.fileName];
+    if ((bytes == null || bytes.isEmpty) && item.savedToPath.isNotEmpty && !item.savedToPath.contains('://')) {
+      try {
+        bytes = await FileActions.readSaved(item.savedToPath);
+      } catch (_) {}
+    }
+    if (bytes == null || bytes.isEmpty) {
+      messenger.showSnackBar(const SnackBar(content: Text('The image is no longer available to copy.')));
+      return;
+    }
+    final copied = await NativeClipboard.writeImage(bytes);
+    messenger.showSnackBar(SnackBar(
+      content: Text(copied ? 'Copied ${item.fileName} to the clipboard.' : 'Could not copy the image to the clipboard.'),
+    ));
+  }
+
   // -------------------------------------------------------------
   // Preview / Open Item Dialog
   // -------------------------------------------------------------
@@ -1174,6 +1194,12 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
   Widget _buildReceivedItemCard(BuildContext context, ReceivedItemModel item, TransferEngine engine) {
     final fileColor = _getFileColor(item.fileType);
     final hasText = item.fileType == ReceivedFileType.text && item.textContent != null;
+    // Desktop: open the file manager at the saved file (Android saves into Downloads).
+    final canShowInFolder = FileActions.canReveal &&
+        item.savedToPath.isNotEmpty &&
+        !item.savedToPath.contains('://') &&
+        !AndroidDownloads.supported;
+    final isImage = item.fileType == ReceivedFileType.image && NativeClipboard.supportsImages;
 
     final avatar = Container(
       width: 44,
@@ -1216,12 +1242,26 @@ class _ReceivedItemsViewState extends State<ReceivedItemsView> {
               );
             },
           ),
+        if (isImage)
+          OutlinedButton.icon(
+            style: outlined,
+            icon: const Icon(Icons.copy_all_rounded, size: 14),
+            label: Text(compact ? 'Copy' : 'Copy image', maxLines: 1, style: TextStyle(fontFamily: 'Poppins', fontSize: labelSize)),
+            onPressed: () => _copyImage(context, item, engine),
+          ),
         OutlinedButton.icon(
           style: outlined,
           icon: const Icon(Icons.visibility, size: 14),
           label: Text(compact ? 'Open' : 'Open / See', maxLines: 1, style: TextStyle(fontFamily: 'Poppins', fontSize: labelSize)),
           onPressed: () => _previewItem(context, item, engine),
         ),
+        if (canShowInFolder)
+          OutlinedButton.icon(
+            style: outlined,
+            icon: const Icon(Icons.folder_open_rounded, size: 14),
+            label: Text(compact ? 'Folder' : 'Show in folder', maxLines: 1, style: TextStyle(fontFamily: 'Poppins', fontSize: labelSize)),
+            onPressed: () => FileActions.runWithSnackBar(context, () => FileActions.revealInFolder(item.savedToPath)),
+          ),
         // Prominent Download / Save to device button
         ElevatedButton.icon(
           style: ElevatedButton.styleFrom(

@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:quickshare/data/models/app_update_info.dart';
 import 'package:quickshare/data/services/app_update_service.dart';
+import 'package:quickshare/data/services/updater/platform_updater.dart';
 
 /// How an installed (older) version detects a new GitHub release, including the minimum
 /// supported version and checksum verification from latest.json.
@@ -16,6 +17,8 @@ void main() {
   const winSha = 'bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22';
   const setupSha = 'cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33';
   const appImageSha = 'dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44dd44';
+  const debSha = 'ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55';
+  const tarballSha = 'ff66ff66ff66ff66ff66ff66ff66ff66ff66ff66ff66ff66ff66ff66ff66ff66';
 
   MockClient github({required String tag, required String minSupported, String? digest, String? manifestSha}) {
     return MockClient((request) async {
@@ -45,9 +48,14 @@ void main() {
                 'browser_download_url': 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/$tag/QuickShareStudio-Windows-Setup.exe',
               },
               {
-                'name': 'QuickShareStudio-Linux.tar.gz',
+                'name': 'QuickShareStudio-Linux-x86_64.deb',
                 'size': 4000,
-                'browser_download_url': 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/$tag/QuickShareStudio-Linux.tar.gz',
+                'browser_download_url': 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/$tag/QuickShareStudio-Linux-x86_64.deb',
+              },
+              {
+                'name': 'QuickShareStudio-Linux-x86_64.tar.gz',
+                'size': 4500,
+                'browser_download_url': 'https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/$tag/QuickShareStudio-Linux-x86_64.tar.gz',
               },
               {
                 'name': 'QuickShareStudio-Linux-x86_64.AppImage',
@@ -74,8 +82,9 @@ void main() {
               'android': {'name': 'QuickShareStudio-Android.apk', 'sha256': manifestSha ?? apkSha},
               'windows': {'name': 'QuickShareStudio-Windows-x64.zip', 'sha256': winSha},
               'windows_setup': {'name': 'QuickShareStudio-Windows-Setup.exe', 'sha256': setupSha},
-              'linux': {'name': 'QuickShareStudio-Linux.tar.gz', 'sha256': 'ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55ee55'},
               'linux_appimage': {'name': 'QuickShareStudio-Linux-x86_64.AppImage', 'sha256': appImageSha},
+              'linux_deb': {'name': 'QuickShareStudio-Linux-x86_64.deb', 'sha256': debSha},
+              'linux_tarball': {'name': 'QuickShareStudio-Linux-x86_64.tar.gz', 'sha256': tarballSha},
             },
           }),
           200,
@@ -115,15 +124,42 @@ void main() {
     expect(info.isMandatory, isTrue);
   });
 
-  test('native Linux selects the verified AppImage for in-app updates', () async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
-    final info = await http.runWithClient(
-      () => AppUpdateService().fetchLatestGitHubRelease(),
-      () => github(tag: 'v9.0.0', minSupported: '2.0.0'),
-    );
-    expect(info!.packageUrl, endsWith('/QuickShareStudio-Linux-x86_64.AppImage'));
-    expect(info.packageSha256, appImageSha);
+  group('native Linux updates from the package it was installed with', () {
+    Future<dynamic> fetchAs(String? asset) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      AppUpdateService.debugLinuxAsset = asset;
+      addTearDown(() {
+        debugDefaultTargetPlatformOverride = null;
+        AppUpdateService.debugLinuxAsset = null;
+      });
+      return http.runWithClient(
+        () => AppUpdateService().fetchLatestGitHubRelease(),
+        () => github(tag: 'v9.0.0', minSupported: '2.0.0'),
+      );
+    }
+
+    test('an AppImage downloads the verified AppImage', () async {
+      final info = await fetchAs(linuxAppImageAsset);
+      expect(info!.packageUrl, endsWith('/QuickShareStudio-Linux-x86_64.AppImage'));
+      expect(info.packageSha256, appImageSha);
+    });
+
+    test('a .deb install downloads the verified .deb', () async {
+      final info = await fetchAs(linuxDebAsset);
+      expect(info!.packageUrl, endsWith('/QuickShareStudio-Linux-x86_64.deb'));
+      expect(info.packageSha256, debSha);
+    });
+
+    test('a tarball install downloads the verified tarball', () async {
+      final info = await fetchAs(linuxTarballAsset);
+      expect(info!.packageUrl, endsWith('/QuickShareStudio-Linux-x86_64.tar.gz'));
+      expect(info.packageSha256, tarballSha);
+    });
+
+    test('a missing package falls back to the AppImage', () async {
+      final info = await fetchAs('QuickShareStudio-Linux-arm64.AppImage');
+      expect(info!.packageUrl, endsWith('/QuickShareStudio-Linux-x86_64.AppImage'));
+    });
   });
 
   test('Windows selects the installer executable for one-tap updates', () async {

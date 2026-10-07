@@ -271,6 +271,10 @@ class AppUpdateService extends ChangeNotifier {
 
   static bool _isGitHubRelease(AppUpdateInfo info) => info.downloadUrl.startsWith('https://github.com/');
 
+  /// Tests choose which Linux package (AppImage, .deb or tarball) this copy pretends to be.
+  @visibleForTesting
+  static String? debugLinuxAsset;
+
   /// Reads the latest GitHub release. Returns null when none has been published yet.
   Future<AppUpdateInfo?> fetchLatestGitHubRelease() async {
     final res = await http
@@ -293,10 +297,9 @@ class AppUpdateService extends ChangeNotifier {
         ? (assets.where((a) => (a['name'] as String? ?? '').toLowerCase().contains('windows') && (a['name'] as String? ?? '').toLowerCase().endsWith('.exe')).firstOrNull
            ?? assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull)
         : (wanted == 'Linux'
-            ? assets.where((a) {
-                final name = (a['name'] as String? ?? '').toLowerCase();
-                return kIsWeb ? name == 'quicksharestudio-linux.tar.gz' : name.endsWith('.appimage') && name.contains('linux');
-              }).firstOrNull
+            // The package matching how this copy was installed; native copies fall back to the AppImage.
+            ? (assets.where((a) => a['name'] == (debugLinuxAsset ?? linuxAssetName)).firstOrNull ??
+                (kIsWeb ? null : assets.where((a) => a['name'] == linuxAppImageAsset).firstOrNull))
             : assets.where((a) => (a['name'] as String? ?? '').contains(wanted)).firstOrNull);
     final digest = (asset?['digest'] as String? ?? '');
     var sha256 = digest.startsWith('sha256:') ? digest.substring(7) : '';

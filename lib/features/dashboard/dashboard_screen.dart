@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../app/app_navigation.dart';
 import '../../core/constants.dart';
 import '../../core/services/theme_service.dart';
 import 'widgets/sidebar.dart';
@@ -48,11 +50,18 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   /// Keeps the workspace state when the layout switches between desktop and mobile.
   final GlobalKey _workspaceKey = GlobalKey();
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  /// Sections shown before the current one: Back (Android) and Esc (desktop)
+  /// return to them.
+  final List<int> _backStack = [];
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    HardwareKeyboard.instance.addHandler(_handleEscape);
+    AppNavigation.requestedSection.addListener(_onRequestedSection);
     _selectedIndex = widget.initialIndex;
   }
 
@@ -63,11 +72,55 @@ class _DashboardScreenState extends State<DashboardScreen>
     _interactionResetToken++;
   }
 
-  void _onNavigate(int index) {
+  void _onNavigate(int index, {bool remember = true}) {
+    if (index == 0) {
+      _backStack.clear();
+    } else if (remember && index != _selectedIndex) {
+      _backStack
+        ..remove(index)
+        ..add(_selectedIndex);
+    }
     setState(() {
       _selectedIndex = index;
       _interactionResetToken++;
     });
+  }
+
+  bool get _canGoBack => _selectedIndex != 0;
+
+  /// Returns to the previous section, or to the dashboard.
+  void _goBack() {
+    final previous = _backStack.isNotEmpty ? _backStack.removeLast() : 0;
+    _onNavigate(previous, remember: false);
+  }
+
+  void _onRequestedSection() {
+    final section = AppNavigation.requestedSection.value;
+    if (section != null && mounted) _onNavigate(section);
+  }
+
+  /// Esc leaves a text field first, then closes the drawer, then goes back a
+  /// section. Dialogs and pages pushed on top handle their own Esc.
+  bool _handleEscape(KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.escape ||
+        !mounted) {
+      return false;
+    }
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return false;
+    final focus = FocusManager.instance.primaryFocus;
+    if (focus?.context?.findAncestorWidgetOfExactType<EditableText>() != null) {
+      focus!.unfocus();
+      return true;
+    }
+    final scaffold = _scaffoldKey.currentState;
+    if (scaffold != null && scaffold.isDrawerOpen) {
+      scaffold.closeDrawer();
+      return true;
+    }
+    if (!_canGoBack) return false;
+    _goBack();
+    return true;
   }
 
   @override
@@ -89,6 +142,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    HardwareKeyboard.instance.removeHandler(_handleEscape);
+    AppNavigation.requestedSection.removeListener(_onRequestedSection);
     super.dispose();
   }
 
@@ -161,102 +216,111 @@ class _DashboardScreenState extends State<DashboardScreen>
         widget.onToggleTheme ??
         () => (themeService?.toggleTheme() ?? ThemeService().toggleTheme());
 
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (_) => FocusManager.instance.primaryFocus?.unfocus(),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isDesktop = constraints.maxWidth >= 960;
+    // Android Back goes to the previous section; on the dashboard it leaves.
+    return PopScope(
+      canPop: !_canGoBack,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _goBack();
+      },
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isDesktop = constraints.maxWidth >= 960;
 
-          if (isDesktop) {
-            // Desktop Composition: Left Sidebar + Scrollable Main Content Area
-            return Scaffold(
-              backgroundColor: AppColors.dashboardBg,
-              body: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Sidebar(
-                    width: 260.0,
-                    selectedIndex: _selectedIndex,
-                    interactionResetToken: _interactionResetToken,
-                    onItemSelected: _onNavigate,
-                    onToggleTheme: onToggle,
-                    isDarkMode: isDark,
-                  ),
-                  Expanded(child: _buildActiveWorkspace(context)),
-                ],
-              ),
-            );
-          } else {
-            // Mobile & Tablet Composition: Drawer Sidebar + Scrollable Body
-            return Scaffold(
-              backgroundColor: AppColors.dashboardBg,
-              drawer: Drawer(
-                backgroundColor: AppColors.charcoalSurface,
-                child: SafeArea(
-                  child: Sidebar(
-                    isDrawer: true,
-                    selectedIndex: _selectedIndex,
-                    interactionResetToken: _interactionResetToken,
-                    onItemSelected: (idx) {
-                      Navigator.of(context).maybePop();
-                      _onNavigate(idx);
-                    },
-                    onToggleTheme: onToggle,
-                    isDarkMode: isDark,
-                  ),
-                ),
-              ),
-              appBar: AppBar(
-                backgroundColor: AppColors.charcoalSurface,
-                surfaceTintColor: Colors.transparent,
-                elevation: 0,
-                leading: Builder(
-                  builder: (ctx) => IconButton(
-                    icon: Icon(
-                      Icons.menu_rounded,
-                      color: AppColors.primaryText,
-                    ),
-                    tooltip: 'Menu',
-                    onPressed: () => Scaffold.of(ctx).openDrawer(),
-                  ),
-                ),
-                title: Row(
+            if (isDesktop) {
+              // Desktop Composition: Left Sidebar + Scrollable Main Content Area
+              return Scaffold(
+                key: _scaffoldKey,
+                backgroundColor: AppColors.dashboardBg,
+                body: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Container(
-                      width: 28.0,
-                      height: 28.0,
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryAccent,
-                        borderRadius: BorderRadius.circular(8.0),
-                      ),
-                      child: const Icon(
-                        Icons.bolt_rounded,
-                        color: AppColors.nearBlack,
-                        size: 18.0,
-                      ),
+                    Sidebar(
+                      width: 260.0,
+                      selectedIndex: _selectedIndex,
+                      interactionResetToken: _interactionResetToken,
+                      onItemSelected: _onNavigate,
+                      onToggleTheme: onToggle,
+                      isDarkMode: isDark,
                     ),
-                    const SizedBox(width: 10.0),
-                    Expanded(
-                      child: Text(
-                        'QuickShare Studio',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontFamily: 'Poppins',
-                          fontSize: 16.0,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primaryText,
-                        ),
-                      ),
-                    ),
+                    Expanded(child: _buildActiveWorkspace(context)),
                   ],
                 ),
-              ),
-              body: _buildActiveWorkspace(context),
-            );
-          }
-        },
+              );
+            } else {
+              // Mobile & Tablet Composition: Drawer Sidebar + Scrollable Body
+              return Scaffold(
+                key: _scaffoldKey,
+                backgroundColor: AppColors.dashboardBg,
+                drawer: Drawer(
+                  backgroundColor: AppColors.charcoalSurface,
+                  child: SafeArea(
+                    child: Sidebar(
+                      isDrawer: true,
+                      selectedIndex: _selectedIndex,
+                      interactionResetToken: _interactionResetToken,
+                      onItemSelected: (idx) {
+                        Navigator.of(context).maybePop();
+                        _onNavigate(idx);
+                      },
+                      onToggleTheme: onToggle,
+                      isDarkMode: isDark,
+                    ),
+                  ),
+                ),
+                appBar: AppBar(
+                  backgroundColor: AppColors.charcoalSurface,
+                  surfaceTintColor: Colors.transparent,
+                  elevation: 0,
+                  leading: Builder(
+                    builder: (ctx) => IconButton(
+                      icon: Icon(
+                        Icons.menu_rounded,
+                        color: AppColors.primaryText,
+                      ),
+                      tooltip: 'Menu',
+                      onPressed: () => Scaffold.of(ctx).openDrawer(),
+                    ),
+                  ),
+                  title: Row(
+                    children: [
+                      Container(
+                        width: 28.0,
+                        height: 28.0,
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryAccent,
+                          borderRadius: BorderRadius.circular(8.0),
+                        ),
+                        child: const Icon(
+                          Icons.bolt_rounded,
+                          color: AppColors.nearBlack,
+                          size: 18.0,
+                        ),
+                      ),
+                      const SizedBox(width: 10.0),
+                      Expanded(
+                        child: Text(
+                          'QuickShare Studio',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 16.0,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primaryText,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                body: _buildActiveWorkspace(context),
+              );
+            }
+          },
+        ),
       ),
     );
   }

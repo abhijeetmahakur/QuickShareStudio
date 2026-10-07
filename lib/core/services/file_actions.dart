@@ -18,6 +18,15 @@ class FileActions {
   /// Opens a file that is already saved (large received files are not kept in memory).
   static Future<String> openSaved(String path) => impl.openSavedFile(path);
 
+  /// Reads a file that was saved earlier (received files too large to keep in memory).
+  static Future<Uint8List> readSaved(String path) => impl.readSavedFile(path);
+
+  /// Whether [revealInFolder] works here (desktop apps and the browser launcher).
+  static bool get canReveal => impl.canReveal;
+
+  /// Opens the file manager at a saved file, with the file selected where supported.
+  static Future<String> revealInFolder(String path) => impl.revealInFolder(path);
+
   /// Opens the OS share sheet; falls back to saving and revealing the file.
   static Future<String> share(Uint8List bytes, String fileName, {String? directory}) =>
       impl.shareFile(bytes, fileName, directory);

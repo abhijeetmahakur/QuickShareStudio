@@ -1,0 +1,152 @@
+name: Linux desktop
+
+# Proves the Linux app on real Ubuntu runners:
+#  - the AppImage, .deb and .tar.gz start on Ubuntu, Debian, Fedora and Linux Mint;
+#  - clipboard (text and images, real Ctrl+C/X/V), tray, notifications and OCR on X11 and Wayland;
+#  - internet transfers between the Linux app and Chrome in both directions, direct and via TURN,
+#    plus resume, retry and checksum checks on the Linux WebRTC stack.
+on:
+  push:
+    branches: [main, "linux-*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  package:
+    name: Build AppImage, .deb and .tar.gz
+    runs-on: ubuntu-latest
+    # The oldest supported base (glibc 2.35), so the binaries also run on newer distributions.
+    container: ubuntu:22.04
+    steps:
+      - name: Install build tools and GTK
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            git curl unzip xz-utils zip jq ca-certificates clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev binutils file imagemagick dpkg-dev \
+            tesseract-ocr tesseract-ocr-eng tesseract-ocr-hin python3 >/dev/null
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: git config --global --add safe.directory '*'
+      - run: flutter config --enable-linux-desktop
+      - run: flutter pub get
+      - run: flutter build linux --release
+      - name: Package
+        run: bash tool/release/package_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            dist/QuickShareStudio-Linux-x86_64.AppImage
+            dist/QuickShareStudio-Linux-x86_64.deb
+            dist/QuickShareStudio-Linux-x86_64.tar.gz
+
+  distros:
+    name: Starts on ${{ matrix.image }} (${{ matrix.kind }})
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: "ubuntu:22.04", kind: appimage, file: QuickShareStudio-Linux-x86_64.AppImage }
+          - { image: "ubuntu:22.04", kind: deb, file: QuickShareStudio-Linux-x86_64.deb }
+          - { image: "ubuntu:24.04", kind: appimage, file: QuickShareStudio-Linux-x86_64.AppImage }
+          - { image: "ubuntu:24.04", kind: deb, file: QuickShareStudio-Linux-x86_64.deb }
+          - { image: "debian:12", kind: deb, file: QuickShareStudio-Linux-x86_64.deb }
+          - { image: "debian:12", kind: tarball, file: QuickShareStudio-Linux-x86_64.tar.gz }
+          - { image: "fedora:latest", kind: appimage, file: QuickShareStudio-Linux-x86_64.AppImage }
+          - { image: "fedora:latest", kind: tarball, file: QuickShareStudio-Linux-x86_64.tar.gz }
+          - { image: "linuxmintd/mint21.3-amd64", kind: appimage, file: QuickShareStudio-Linux-x86_64.AppImage }
+          - { image: "linuxmintd/mint21.3-amd64", kind: deb, file: QuickShareStudio-Linux-x86_64.deb }
+          - { image: "linuxmintd/mint22.1-amd64", kind: appimage, file: QuickShareStudio-Linux-x86_64.AppImage }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages
+          path: dist
+      - name: Start the ${{ matrix.kind }} on ${{ matrix.image }}
+        run: |
+          mkdir -p smoke
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/smoke:/out" "${{ matrix.image }}" \
+            bash /src/tool/release/linux_smoke_test.sh "${{ matrix.kind }}" "/src/dist/${{ matrix.file }}" /out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ strategy.job-index }}
+          path: smoke/
+
+  desktop:
+    name: Clipboard, tray, notifications, OCR (X11 and Wayland)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install GTK, a virtual X server, sway and the tools other apps use
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            xvfb xclip xdotool sway wl-clipboard wtype dbus-x11 libgl1-mesa-dri \
+            tesseract-ocr tesseract-ocr-eng tesseract-ocr-hin >/dev/null
+      - run: flutter config --enable-linux-desktop
+      - run: flutter pub get
+      - name: X11 session
+        run: |
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1440x900x24" \
+            flutter test integration_test/linux_desktop_test.dart -d linux --reporter expanded 2>&1 | tee x11.log
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Wayland session
+        run: |
+          dbus-run-session -- bash tool/ci/run_in_sway.sh \
+            flutter test integration_test/linux_desktop_test.dart -d linux --reporter expanded 2>&1 | tee wayland.log
+          test "${PIPESTATUS[0]}" -eq 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-desktop-logs
+          path: "*.log"
+
+  internet:
+    name: Internet transfers, Linux app and Chrome
+    runs-on: ubuntu-latest
+    # Uses the public PeerJS Cloud; a cloud outage must not block merges.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev xvfb >/dev/null
+      - run: flutter config --enable-linux-desktop
+      - run: flutter pub get
+      - run: flutter build web --wasm -t tool/e2e/internet_e2e.dart -o build/e2e_web
+      - run: flutter build linux --release -t tool/e2e/internet_e2e.dart
+      - run: python3 tool/e2e/make_test_pdf.py build/Lab-Report-20MB.pdf 20
+      - run: cd tool/e2e && npm install --no-audit --no-fund
+      - name: Linux <-> Chrome over PeerJS + WebRTC (20 MB PDF both ways, TURN relay, resume, retry)
+        run: |
+          node tool/e2e/turn_server.mjs 3478 &
+          sleep 2
+          xvfb-run -a node tool/e2e/run_linux_e2e.mjs \
+            --linux=build/linux/x64/release/bundle/quickshare --pdf=build/Lab-Report-20MB.pdf \
+            --turn=turn:127.0.0.1:3478 --turnUser=e2e --turnPass=e2e-secret \
+            --chrome="$(which google-chrome)" --log=linux-internet-e2e.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-internet-e2e-log
+          path: linux-internet-e2e.log

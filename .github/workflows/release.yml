@@ -57,66 +57,61 @@ jobs:
             dist/QuickShareStudio-Windows-Setup.exe
 
   linux-release:
-    name: Linux AppImage and compatibility web bundle
+    name: Linux AppImage, .deb and .tar.gz
     runs-on: ubuntu-latest
+    # Built on the oldest supported base (Ubuntu 22.04, glibc 2.35) so the packages also run
+    # on newer Ubuntu, Debian, Fedora and Linux Mint releases.
+    container: ubuntu:22.04
     steps:
+      - name: Install build tools and GTK
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            git curl unzip xz-utils zip jq ca-certificates clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev binutils file imagemagick dpkg-dev \
+            tesseract-ocr tesseract-ocr-eng tesseract-ocr-hin python3 >/dev/null
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
-      - name: Install Linux desktop build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libblkid-dev liblzma-dev
+      - run: git config --global --add safe.directory '*'
       - run: flutter config --enable-linux-desktop
       - run: flutter pub get
-      - run: flutter build web --release --wasm --no-web-resources-cdn
       - run: flutter build linux --release
-      - name: Package Linux AppImage and compatibility launcher bundle
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          PKG=dist/QuickShareStudio-Linux
-          mkdir -p "$PKG/web"
-          cp -r build/web/. "$PKG/web/"
-          cp scripts/server.py scripts/launch.sh "$PKG/"
-          chmod +x "$PKG/launch.sh"
-          cp LICENSE VERSION "$PKG/"
-          tar -C dist -czf dist/QuickShareStudio-Linux.tar.gz QuickShareStudio-Linux
-          APPDIR="$RUNNER_TEMP/QuickShareStudio.AppDir"
-          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-          cp -a build/linux/x64/release/bundle/. "$APPDIR/usr/bin/"
-          cp assets/logo.png "$APPDIR/quickshare.png"
-          cp assets/logo.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/quickshare.png"
-          cat > "$APPDIR/quickshare.desktop" <<'EOF'
-          [Desktop Entry]
-          Name=QuickShare Studio
-          Exec=quickshare
-          TryExec=quickshare
-          Icon=quickshare
-          Type=Application
-          Categories=Utility;Network;
-          EOF
-          cat > "$APPDIR/AppRun" <<'EOF'
-          #!/bin/sh
-          HERE="$(dirname "$(readlink -f "$0")")"
-          cd "$HERE/usr/bin"
-          exec "$HERE/usr/bin/quickshare" "$@"
-          EOF
-          chmod +x "$APPDIR/AppRun"
-          curl -fL --retry 3 \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
-            -o "$RUNNER_TEMP/appimagetool.AppImage"
-          chmod +x "$RUNNER_TEMP/appimagetool.AppImage"
-          APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$RUNNER_TEMP/appimagetool.AppImage" \
-            "$APPDIR" dist/QuickShareStudio-Linux-x86_64.AppImage
+      - name: Package AppImage, .deb and .tar.gz
+        run: bash tool/release/package_linux.sh
       - uses: actions/upload-artifact@v4
         with:
           name: linux-packages
           path: |
-            dist/QuickShareStudio-Linux.tar.gz
             dist/QuickShareStudio-Linux-x86_64.AppImage
+            dist/QuickShareStudio-Linux-x86_64.deb
+            dist/QuickShareStudio-Linux-x86_64.tar.gz
+
+  linux-smoke:
+    name: Linux starts on ${{ matrix.image }} (${{ matrix.kind }})
+    needs: linux-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { image: "ubuntu:22.04", kind: appimage, file: QuickShareStudio-Linux-x86_64.AppImage }
+          - { image: "ubuntu:24.04", kind: deb, file: QuickShareStudio-Linux-x86_64.deb }
+          - { image: "debian:12", kind: deb, file: QuickShareStudio-Linux-x86_64.deb }
+          - { image: "fedora:latest", kind: appimage, file: QuickShareStudio-Linux-x86_64.AppImage }
+          - { image: "linuxmintd/mint21.3-amd64", kind: tarball, file: QuickShareStudio-Linux-x86_64.tar.gz }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages
+          path: dist
+      - name: Start the ${{ matrix.kind }} on ${{ matrix.image }}
+        run: |
+          mkdir -p smoke
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/smoke:/out" "${{ matrix.image }}" \
+            bash /src/tool/release/linux_smoke_test.sh "${{ matrix.kind }}" "/src/dist/${{ matrix.file }}" /out
 
   android-release:
     name: Android APK
@@ -184,7 +179,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [windows-release, linux-release, android-release]
+    needs: [windows-release, linux-release, linux-smoke, android-release]
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

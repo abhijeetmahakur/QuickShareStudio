@@ -7,6 +7,7 @@ import 'package:async/async.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:quickshare/core/services/transfer_notifications.dart';
 import 'package:quickshare/data/models/device_model.dart';
 import 'package:quickshare/data/models/transfer_item.dart';
 import 'package:quickshare/data/services/cross_device_transfer_service.dart';
@@ -363,6 +364,74 @@ void main() {
       }
       expect(statuses.first, HttpStatus.forbidden);
       expect(statuses, contains(HttpStatus.tooManyRequests));
+    });
+
+    test('14. In the background, an incoming offer and finished transfers raise OS notifications', () async {
+      final shown = <(String, String, bool, int?)>[];
+      TransferNotifications.show = (title, body, {urgent = false, openSection}) async {
+        shown.add((title, body, urgent, openSection));
+        return true;
+      };
+      TransferNotifications.isInForeground = () => false;
+      TransferNotifications.attach(engine, manager);
+      addTearDown(TransferNotifications.detach);
+
+      await service.startReceiverServer(preferredPort: 9103);
+      final self = await pairWithSelf();
+      final item = await manager.send(self, [
+        BytesFileSource('Lab Report.pdf', Uint8List.fromList(List.generate(200000, (i) => i & 0xFF))),
+      ]);
+      await _waitFor(() => manager.pendingOffers.isNotEmpty, what: 'accept prompt');
+      await _waitFor(() => shown.isNotEmpty, what: 'offer notification');
+      expect(shown.first.$1, contains('wants to send you Lab Report.pdf'));
+      expect(shown.first.$3, isTrue, reason: 'incoming offers are urgent');
+
+      manager.acceptOffer(manager.pendingOffers.single);
+      expect(await engine.waitForTransfer(item.transferId), isTrue);
+      // A transfer to this same device shares one item, so only the sending side shows here.
+      await _waitFor(() => shown.any((n) => n.$1 == 'Sent Lab Report.pdf'), what: 'sent notification');
+      expect(shown.firstWhere((n) => n.$1 == 'Sent Lab Report.pdf').$4, 7, reason: 'opens Transfer History');
+
+      // The receiving side of a transfer from another device.
+      final incoming = TransferItem(
+        fileName: 'Photos.zip',
+        fileSizeBytes: 4096,
+        fileType: TransferFileType.other,
+        sha256: '',
+        totalChunks: 1,
+        isSender: false,
+        peerDeviceName: 'Pixel 8',
+        peerDeviceId: 'pixel',
+        connectionType: 'Internet (WebRTC, encrypted)',
+        status: TransferStatus.transferring,
+      );
+      engine.addActiveTransfer(incoming);
+      engine.updateTransfer(incoming.copyWith(status: TransferStatus.completed, progress: 1));
+      await _waitFor(() => shown.any((n) => n.$1 == 'Received Photos.zip'), what: 'received notification');
+      final received = shown.firstWhere((n) => n.$1 == 'Received Photos.zip');
+      expect(received.$2, contains('From Pixel 8'));
+      expect(received.$2, contains('checksum verified'));
+      expect(received.$4, 4, reason: 'opens Received Items');
+
+      // In front, nothing is shown (the app itself shows it).
+      TransferNotifications.isInForeground = () => true;
+      final count = shown.length;
+      final quiet = TransferItem(
+        fileName: 'b.txt',
+        fileSizeBytes: 1,
+        fileType: TransferFileType.text,
+        sha256: '',
+        totalChunks: 1,
+        isSender: false,
+        peerDeviceName: 'Pixel 8',
+        peerDeviceId: 'pixel',
+        connectionType: 'LAN',
+        status: TransferStatus.transferring,
+      );
+      engine.addActiveTransfer(quiet);
+      engine.updateTransfer(quiet.copyWith(status: TransferStatus.completed));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(shown.length, count);
     });
   });
 

@@ -8,6 +8,7 @@ import 'package:web_socket_channel/io.dart';
 import '../models/device_model.dart';
 import '../../core/constants.dart';
 import '../../transfer/channel.dart';
+import '../../transfer/lan/lan_address.dart';
 import '../../transfer/lan/ws_frame_channel.dart';
 import 'peer_link.dart';
 import 'transfer_engine.dart';
@@ -100,20 +101,12 @@ class CrossDeviceTransferService extends ChangeNotifier implements PeerLink {
         type: InternetAddressType.IPv4,
       );
 
-      // Prioritize Wi-Fi, Ethernet, and local subnet addresses
-      for (final iface in interfaces) {
-        for (final addr in iface.addresses) {
-          final ip = addr.address;
-          if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
-            return ip;
-          }
-        }
-      }
-
-      // Fallback to first available IPv4
-      if (interfaces.isNotEmpty && interfaces.first.addresses.isNotEmpty) {
-        return interfaces.first.addresses.first.address;
-      }
+      // The Wi-Fi / Ethernet address, not a Docker, VM or VPN bridge.
+      final picked = pickLanAddress([
+        for (final iface in interfaces)
+          for (final addr in iface.addresses) (interface: iface.name, address: addr.address),
+      ]);
+      if (picked != null) return picked;
     } catch (e) {
       debugPrint('Error detecting local IP address: $e');
     }

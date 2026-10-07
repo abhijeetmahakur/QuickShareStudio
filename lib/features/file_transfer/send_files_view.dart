@@ -144,11 +144,11 @@ class _SendFilesViewState extends State<SendFilesView> {
 
   Future<void> _addDroppedFiles(DropDoneDetails details) async {
     for (final file in details.files) {
-      final category = SelectedFileItem.detectCategory(file.name);
-      if (category != 'pdf' && category != 'photo') continue;
+      // Any file can be sent; folders are skipped.
+      if (file is DropItemDirectory) continue;
       try {
         final bytes = await file.readAsBytes();
-        if (mounted) _addOrReplaceFile(file.name, bytes, category);
+        if (mounted) _addOrReplaceFile(file.name, bytes, SelectedFileItem.detectCategory(file.name));
       } catch (_) {
         if (mounted) setState(() => _errorMessage = 'Could not read ${file.name}.');
       }
@@ -543,6 +543,8 @@ class _SendFilesViewState extends State<SendFilesView> {
         ),
       ),
       body: DropTarget(
+        // Every visited section stays mounted: only the visible one takes drops.
+        enable: TickerMode.valuesOf(context).enabled,
         onDragEntered: (_) => setState(() => _isDragging = true),
         onDragExited: (_) => setState(() => _isDragging = false),
         onDragDone: _addDroppedFiles,

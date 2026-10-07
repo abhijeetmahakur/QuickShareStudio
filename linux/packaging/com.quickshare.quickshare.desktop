@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=QuickShare Studio
+GenericName=File Sharing
+Comment=Share files, clipboard and PDFs between your devices
+Exec=@EXEC@ %U
+Icon=com.quickshare.quickshare
+Terminal=false
+Categories=Utility;Network;FileTransfer;
+Keywords=share;transfer;send;pdf;clipboard;qr;screenshot;ocr;
+StartupWMClass=com.quickshare.quickshare
+StartupNotify=true

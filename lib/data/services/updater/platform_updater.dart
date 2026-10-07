@@ -22,6 +22,14 @@ class InstallResult {
 /// Whether this platform can download and install updates by itself.
 bool get canSelfUpdate => impl.canSelfUpdate;
 
+/// Linux release assets: the AppImage (main), the Debian package and the portable tarball.
+const linuxAppImageAsset = 'QuickShareStudio-Linux-x86_64.AppImage';
+const linuxDebAsset = 'QuickShareStudio-Linux-x86_64.deb';
+const linuxTarballAsset = 'QuickShareStudio-Linux-x86_64.tar.gz';
+
+/// The Linux asset this copy updates from (it depends on how it was installed).
+String get linuxAssetName => impl.linuxAssetName;
+
 /// Downloads [update]'s package for this platform, verifies its SHA-256 and installs it
 /// (Android: system installer after a signer check; desktop: the launcher swaps the bundle and
 /// restarts). [onProgress] receives 0..1.

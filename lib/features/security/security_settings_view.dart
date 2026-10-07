@@ -2,6 +2,7 @@ import 'dart:io' show File;
 import 'widgets/connection_settings_section.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import '../../core/services/desktop_integration.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -37,6 +38,7 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
   // Notification Preferences
   bool _notifyIncomingTransfers = true;
   bool _notifyCompletedFailedTransfers = true;
+  bool _closeToTray = true;
 
   // Clipboard Privacy Preferences
   bool _clipboardSendOnTapOnly = true;
@@ -70,6 +72,7 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
             prefs.getBool('notify_incoming_transfers') ?? true;
         _notifyCompletedFailedTransfers =
             prefs.getBool('notify_completed_failed') ?? true;
+        _closeToTray = prefs.getBool(DesktopIntegration.closeToTrayKey) ?? true;
         _clipboardSendOnTapOnly =
             prefs.getBool('clipboard_send_on_tap_only') ?? true;
         _clipboardClearPolicy =
@@ -905,7 +908,7 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                     subtitle: Text(
-                      'Receive instant visual banners and alerts when a paired device initiates a transfer',
+                      'Show a system notification when a device wants to send you files while QuickShare is in the background',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppColors.secondaryText,
@@ -929,7 +932,7 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                     subtitle: Text(
-                      'Alert when long-running file transfers, PDFs, or batch exchanges complete or encounter an error',
+                      'Notify when a transfer finishes or fails while QuickShare is in the background',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppColors.secondaryText,
@@ -941,6 +944,40 @@ class _SecuritySettingsViewState extends State<SecuritySettingsView> {
                       _saveBoolPref('notify_completed_failed', val);
                     },
                   ),
+                  if (DesktopIntegration.supportsTray) ...[
+                    const Divider(height: 1),
+                    ValueListenableBuilder<bool>(
+                      valueListenable: DesktopIntegration.trayVisible,
+                      builder: (context, trayShown, _) => SwitchListTile(
+                        key: const Key('close_to_tray_switch'),
+                        contentPadding: EdgeInsets.zero,
+                        secondary: Icon(
+                          Icons.move_to_inbox_rounded,
+                          color: AppColors.primaryAccent,
+                        ),
+                        title: const Text(
+                          'Keep Running in the System Tray',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text(
+                          trayShown
+                              ? 'Closing the window keeps QuickShare reachable for incoming files. Quit from the tray icon.'
+                              : 'This desktop shows no tray icons (on GNOME, enable the AppIndicator extension), so closing the window quits.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.secondaryText,
+                          ),
+                        ),
+                        value: _closeToTray && trayShown,
+                        onChanged: trayShown
+                            ? (val) {
+                                setState(() => _closeToTray = val);
+                                DesktopIntegration.setCloseToTray(val);
+                              }
+                            : null,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

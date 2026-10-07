@@ -2,14 +2,52 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../../data/models/screenshot_item.dart';
+import '../platform/native_channels.dart';
 import 'web_interop_stub.dart' if (dart.library.js_interop) 'web_interop_web.dart';
 
 class ClipboardImageService {
+  /// How to put a screenshot on the clipboard on this platform (shown when a paste finds none).
+  static String get copyHint {
+    if (kIsWeb) return 'Copy an image, then paste.';
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.windows => 'Copy an image (Win+Shift+S / PrtScn), then paste.',
+      TargetPlatform.linux => 'Copy an image (PrtScn, or Copy Image in any app), then paste.',
+      _ => 'Copy an image, then paste.',
+    };
+  }
+
+  /// The clipboard image as PNG bytes (system clipboard, or the browser's), or null. Unlike
+  /// [readPastedImage] this never guesses images from text.
+  static Future<Uint8List?> readImageBytes() async {
+    final native = await NativeClipboard.readImage();
+    if (native != null) return native;
+    try {
+      final webB64 = await readWebClipboardImageAsync();
+      if (webB64 != null && webB64.isNotEmpty) return _decodeBase64(webB64);
+    } catch (_) {}
+    return null;
+  }
+
   /// Attempts to read an image from the clipboard.
-  /// 1. Checks browser paste event buffer captured in JS (for Flutter Web).
-  /// 2. Checks text clipboard for data URL / base64 image strings.
+  /// 1. The system clipboard image (Linux, Windows and Android apps).
+  /// 2. Checks browser paste event buffer captured in JS (for Flutter Web).
+  /// 3. Checks text clipboard for data URL / base64 image strings.
   static Future<ScreenshotItem?> readPastedImage() async {
-    // 1. Check async web clipboard (supports both toolbar button click and native paste)
+    // 1. Native clipboard: screenshots and images copied from any app, as PNG.
+    try {
+      final png = await NativeClipboard.readImage();
+      if (png != null) {
+        final now = DateTime.now();
+        return await ScreenshotItem.create(
+          name: 'Pasted_Screenshot_${now.millisecondsSinceEpoch.toString().substring(7)}.png',
+          bytes: png,
+        );
+      }
+    } catch (e) {
+      debugPrint('Error reading clipboard image: $e');
+    }
+
+    // 2. Check async web clipboard (supports both toolbar button click and native paste)
     try {
       final webB64 = await readWebClipboardImageAsync();
       if (webB64 != null && webB64.isNotEmpty) {
@@ -27,7 +65,7 @@ class ClipboardImageService {
       debugPrint('Error reading async web clipboard image: $e');
     }
 
-    // 2. Check standard text clipboard for base64 or data URLs
+    // 3. Check standard text clipboard for base64 or data URLs
     try {
       final clipData = await Clipboard.getData(Clipboard.kTextPlain);
       final text = clipData?.text?.trim();
