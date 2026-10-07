@@ -2,6 +2,11 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.22] - 2026-10-07
+
+### Fixed
+- Linux now passes the bundled WebRTC library directory to the linker so the native plugin builds and resolves its indirect `libwebrtc.so` dependency.
+
 ## [2.0.21] - 2026-10-07
 
 ### Fixed

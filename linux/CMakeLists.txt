@@ -75,6 +75,21 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# The WebRTC plugin links libwebrtc from its pub-cache directory, but the
+# plugin shared object is staged under build/linux/.../plugins. Help ld resolve
+# that indirect dependency while linking the app; installed bundles still use
+# the colocated libraries under lib/ via their runtime paths.
+if(TARGET flutter_webrtc_plugin)
+  get_target_property(FLUTTER_WEBRTC_LINK_LIBRARIES flutter_webrtc_plugin LINK_LIBRARIES)
+  foreach(FLUTTER_WEBRTC_LINK_LIBRARY IN LISTS FLUTTER_WEBRTC_LINK_LIBRARIES)
+    if(FLUTTER_WEBRTC_LINK_LIBRARY MATCHES "libwebrtc[.]so$")
+      get_filename_component(FLUTTER_WEBRTC_LIBRARY_DIR "${FLUTTER_WEBRTC_LINK_LIBRARY}" DIRECTORY)
+      target_link_options(${BINARY_NAME} PRIVATE "-Wl,-rpath-link,${FLUTTER_WEBRTC_LIBRARY_DIR}")
+      set_property(TARGET flutter_webrtc_plugin APPEND PROPERTY BUILD_RPATH "${FLUTTER_WEBRTC_LIBRARY_DIR}")
+    endif()
+  endforeach()
+endif()
+
 
 # === Installation ===
 # By default, "installing" just makes a relocatable bundle in the build
