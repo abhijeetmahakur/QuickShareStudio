@@ -2,6 +2,11 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.23] - 2026-10-07
+
+### Fixed
+- Release workflow keystore decoding now trims whitespace and newlines for Android signing, ensuring the unified release build completes and publishes all packages (Windows installer/zip, Linux AppImage, Debian package, native/web tarballs, and Android APK).
+
 ## [2.0.22] - 2026-10-07
 
 ### Fixed
