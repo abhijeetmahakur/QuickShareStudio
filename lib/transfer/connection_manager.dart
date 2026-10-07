@@ -214,7 +214,7 @@ class ConnectionManager extends ChangeNotifier {
       },
       onSignalingError: (error) {
         if (_hostedPeerId == session.peerId) {
-          hostStatus = 'Internet pairing could not register the code: $error. Check the network and retry.';
+          hostStatus = 'Internet pairing failed: $error. Check outbound TCP 443, STUN/TURN access, and the firewall.';
         }
         notifyListeners();
       },
@@ -233,7 +233,7 @@ class ConnectionManager extends ChangeNotifier {
       if (_host == host && host.isListening) hostStatus = null;
     } catch (e) {
       if (_host == host) {
-        hostStatus = hostStatus ?? 'Internet pairing could not register the code: $e. Same-Wi-Fi pairing may still work.';
+        hostStatus = hostStatus ?? 'Internet pairing failed: $e. Same-Wi-Fi pairing may still work.';
       }
     } finally {
       _hosting = false;

@@ -23,7 +23,8 @@ class TestDevice {
   final String name;
   final String platform;
 
-  RemoteIdentity toRemote() => RemoteIdentity(id: id, name: name, platform: platform);
+  RemoteIdentity toRemote() =>
+      RemoteIdentity(id: id, name: name, platform: platform);
 }
 
 class TransferProtocolTestSession {
@@ -79,7 +80,9 @@ class TransferProtocolTestSession {
     required GeneratedFileSource source,
     required String expectedHash,
   }) async {
-    debugPrint('[QuickShare] Protocol test sending $fileName ($byteSize bytes) over an in-memory channel.');
+    debugPrint(
+      '[QuickShare] Protocol test sending $fileName ($byteSize bytes) over an in-memory channel.',
+    );
 
     final out = OutgoingTransfer(
       files: [source],
@@ -99,7 +102,9 @@ class TransferProtocolTestSession {
     final done = receivedUpdates.isNotEmpty ? receivedUpdates.last : null;
     expect(done?.phase, TransferPhase.completed);
     expect(done?.received.first.sha256, expectedHash);
-    debugPrint('[QuickShare] Transfer completed & verified checksum for $fileName: $expectedHash');
+    debugPrint(
+      '[QuickShare] Transfer completed & verified checksum for $fileName: $expectedHash',
+    );
   }
 
   Future<void> dispose() async {
@@ -117,9 +122,21 @@ Future<String> _computeHash(FileSource source) async {
 }
 
 void main() {
-  const linuxDevice = TestDevice(id: 'dev-linux', name: 'Ubuntu Desktop', platform: 'Linux');
-  const androidDevice = TestDevice(id: 'dev-android', name: 'Pixel Phone', platform: 'Android');
-  const windowsDevice = TestDevice(id: 'dev-windows', name: 'Windows Laptop', platform: 'Windows');
+  const linuxDevice = TestDevice(
+    id: 'dev-linux',
+    name: 'Ubuntu Desktop',
+    platform: 'Linux',
+  );
+  const androidDevice = TestDevice(
+    id: 'dev-android',
+    name: 'Pixel Phone',
+    platform: 'Android',
+  );
+  const windowsDevice = TestDevice(
+    id: 'dev-windows',
+    name: 'Windows Laptop',
+    platform: 'Windows',
+  );
 
   late final GeneratedFileSource source1MB;
   late final String hash1MB;
@@ -130,7 +147,11 @@ void main() {
     source1MB = GeneratedFileSource('1MB.bin', 1024 * 1024, seed: 101);
     hash1MB = await _computeHash(source1MB);
 
-    source20MB = GeneratedFileSource('document.pdf', 20 * 1024 * 1024, seed: 202);
+    source20MB = GeneratedFileSource(
+      'document.pdf',
+      20 * 1024 * 1024,
+      seed: 202,
+    );
     hash20MB = await _computeHash(source20MB);
   });
 
@@ -149,19 +170,22 @@ void main() {
       await session.dispose();
     });
 
-    test('Linux-role sender to Android-role receiver, 20 MB .pdf-named payload', () async {
-      final session = TransferProtocolTestSession(
-        senderDevice: linuxDevice,
-        receiverDevice: androidDevice,
-      );
-      await session.sendAndVerify(
-        fileName: 'large_document.pdf',
-        byteSize: 20 * 1024 * 1024,
-        source: source20MB,
-        expectedHash: hash20MB,
-      );
-      await session.dispose();
-    });
+    test(
+      'Linux-role sender to Android-role receiver, 20 MB .pdf-named payload',
+      () async {
+        final session = TransferProtocolTestSession(
+          senderDevice: linuxDevice,
+          receiverDevice: androidDevice,
+        );
+        await session.sendAndVerify(
+          fileName: 'large_document.pdf',
+          byteSize: 20 * 1024 * 1024,
+          source: source20MB,
+          expectedHash: hash20MB,
+        );
+        await session.dispose();
+      },
+    );
 
     test('Android-role sender to Linux-role receiver, 1 MB', () async {
       final session = TransferProtocolTestSession(
@@ -177,19 +201,22 @@ void main() {
       await session.dispose();
     });
 
-    test('Android-role sender to Linux-role receiver, 20 MB .pdf-named payload', () async {
-      final session = TransferProtocolTestSession(
-        senderDevice: androidDevice,
-        receiverDevice: linuxDevice,
-      );
-      await session.sendAndVerify(
-        fileName: 'manual_android.pdf',
-        byteSize: 20 * 1024 * 1024,
-        source: source20MB,
-        expectedHash: hash20MB,
-      );
-      await session.dispose();
-    });
+    test(
+      'Android-role sender to Linux-role receiver, 20 MB .pdf-named payload',
+      () async {
+        final session = TransferProtocolTestSession(
+          senderDevice: androidDevice,
+          receiverDevice: linuxDevice,
+        );
+        await session.sendAndVerify(
+          fileName: 'manual_android.pdf',
+          byteSize: 20 * 1024 * 1024,
+          source: source20MB,
+          expectedHash: hash20MB,
+        );
+        await session.dispose();
+      },
+    );
 
     test('Linux-role sender to Windows-role receiver, 1 MB', () async {
       final session = TransferProtocolTestSession(
@@ -205,19 +232,22 @@ void main() {
       await session.dispose();
     });
 
-    test('Linux-role sender to Windows-role receiver, 20 MB .pdf-named payload', () async {
-      final session = TransferProtocolTestSession(
-        senderDevice: linuxDevice,
-        receiverDevice: windowsDevice,
-      );
-      await session.sendAndVerify(
-        fileName: 'presentation.pdf',
-        byteSize: 20 * 1024 * 1024,
-        source: source20MB,
-        expectedHash: hash20MB,
-      );
-      await session.dispose();
-    });
+    test(
+      'Linux-role sender to Windows-role receiver, 20 MB .pdf-named payload',
+      () async {
+        final session = TransferProtocolTestSession(
+          senderDevice: linuxDevice,
+          receiverDevice: windowsDevice,
+        );
+        await session.sendAndVerify(
+          fileName: 'presentation.pdf',
+          byteSize: 20 * 1024 * 1024,
+          source: source20MB,
+          expectedHash: hash20MB,
+        );
+        await session.dispose();
+      },
+    );
 
     test('Windows-role sender to Linux-role receiver, 1 MB', () async {
       final session = TransferProtocolTestSession(
@@ -233,40 +263,49 @@ void main() {
       await session.dispose();
     });
 
-    test('Windows-role sender to Linux-role receiver, 20 MB .pdf-named payload', () async {
-      final session = TransferProtocolTestSession(
-        senderDevice: windowsDevice,
-        receiverDevice: linuxDevice,
-      );
-      await session.sendAndVerify(
-        fileName: 'windows_guide.pdf',
-        byteSize: 20 * 1024 * 1024,
-        source: source20MB,
-        expectedHash: hash20MB,
-      );
-      await session.dispose();
-    });
+    test(
+      'Windows-role sender to Linux-role receiver, 20 MB .pdf-named payload',
+      () async {
+        final session = TransferProtocolTestSession(
+          senderDevice: windowsDevice,
+          receiverDevice: linuxDevice,
+        );
+        await session.sendAndVerify(
+          fileName: 'windows_guide.pdf',
+          byteSize: 20 * 1024 * 1024,
+          source: source20MB,
+          expectedHash: hash20MB,
+        );
+        await session.dispose();
+      },
+    );
 
-    test('9. ConnectFlow correctly shows Direct vs Relay route in UI state', () async {
-      final directFlow = ConnectFlow<bool>(
-        lan: (_) => Completer<bool>().future,
-        internetStun: (_) async => false, // false indicates direct / not relayed
-        internetRelay: (_) => Completer<bool>().future,
-        isOnline: () async => true,
-        connectionLabel: (isRelayed, attempted) => isRelayed ? 'Relay' : 'Direct',
-      );
-      expect(await directFlow.run(), isFalse);
-      expect(directFlow.state.value.statusText, 'Connected via Direct');
+    test(
+      '9. ConnectFlow correctly shows Direct vs Relay route in UI state',
+      () async {
+        final directFlow = ConnectFlow<bool>(
+          lan: (_) => Completer<bool>().future,
+          internetStun: (_) async =>
+              false, // false indicates direct / not relayed
+          internetRelay: (_) => Completer<bool>().future,
+          isOnline: () async => true,
+          connectionLabel: (isRelayed, attempted) =>
+              isRelayed ? 'Relay' : 'Direct',
+        );
+        expect(await directFlow.run(), isFalse);
+        expect(directFlow.state.value.statusText, 'Connected via Direct');
 
-      final relayFlow = ConnectFlow<bool>(
-        lan: (_) => Completer<bool>().future,
-        internetStun: (_) async => throw Exception('NAT traversal failed'),
-        internetRelay: (_) async => true, // true indicates relayed
-        isOnline: () async => true,
-        connectionLabel: (isRelayed, attempted) => isRelayed ? 'Relay' : 'Direct',
-      );
-      expect(await relayFlow.run(), isTrue);
-      expect(relayFlow.state.value.statusText, 'Connected via Relay');
-    });
+        final relayFlow = ConnectFlow<bool>(
+          lan: (_) => Completer<bool>().future,
+          internetStun: (_) async => throw Exception('NAT traversal failed'),
+          internetRelay: (_) async => true, // true indicates relayed
+          isOnline: () async => true,
+          connectionLabel: (isRelayed, attempted) =>
+              isRelayed ? 'Relay' : 'Direct',
+        );
+        expect(await relayFlow.run(), isTrue);
+        expect(relayFlow.state.value.statusText, 'Connected via Relay');
+      },
+    );
   });
 }
