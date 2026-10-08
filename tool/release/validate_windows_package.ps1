@@ -106,7 +106,32 @@ function Test-ApplicationStartup {
         if (-not $process.HasExited) {
             Stop-Process -Id $process.Id -Force
         }
+        # Stop-Process returns before Windows releases the app's DLLs; wait so
+        # the next copy and the temporary folder cleanup are not blocked.
+        if (-not $process.WaitForExit(15000)) {
+            Write-Warning "$Description was still running 15 seconds after it was stopped."
+        }
     }
+}
+
+function Remove-TemporaryDirectory {
+    param([string]$Path)
+
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return
+        }
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            Start-Sleep -Seconds 2
+        }
+    }
+    # The packages already passed every check, so a locked temporary file must
+    # not fail the release.
+    Write-Warning "Could not remove the smoke-test folder ${Path}: files are still in use."
 }
 
 $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("QuickShare-Windows-Smoke-" + [Guid]::NewGuid().ToString("N"))
@@ -141,7 +166,5 @@ try {
     Test-ApplicationStartup $installDirectory "Installed application"
 }
 finally {
-    if (Test-Path -LiteralPath $temporaryDirectory) {
-        Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
-    }
+    Remove-TemporaryDirectory $temporaryDirectory
 }

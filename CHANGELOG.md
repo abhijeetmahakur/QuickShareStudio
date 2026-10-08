@@ -2,6 +2,16 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.24] - 2026-10-08
+
+First release since 2.0.18; it also ships the unreleased fixes from 2.0.19 to 2.0.23.
+
+### Fixed
+- **Linux cross-network pairing:** Linux uses the same Internet-first pairing with a LAN shortcut as Windows and Android, so it pairs across different networks and mobile data.
+- **Linux packages:** The AppImage, Debian package and native tarball bundle the WebRTC libraries they need, and each release checks that the AppImage starts.
+- **Android update signing:** Android APKs are signed with one permanent release key, and a signature mismatch during an update shows reinstall guidance once.
+- **Release pipeline:** The Android signing step accepts the keystore secret in any common Base64 form and explains which secret is wrong, and the Windows package check no longer fails while removing its test folder.
+
 ## [2.0.23] - 2026-10-07
 
 ### Fixed

@@ -214,28 +214,9 @@ jobs:
           EXPECTED_CERT_SHA256: ${{ secrets.ANDROID_RELEASE_CERT_SHA256 }}
         run: |
           set -euo pipefail
-          : "${KEYSTORE_BASE64:?Set the ANDROID_KEYSTORE_BASE64 Actions secret.}"
-          : "${KEYSTORE_PASSWORD:?Set the ANDROID_KEYSTORE_PASSWORD Actions secret.}"
-          : "${KEY_ALIAS:?Set the ANDROID_KEY_ALIAS Actions secret.}"
           : "${KEY_PASSWORD:?Set the ANDROID_KEY_PASSWORD Actions secret.}"
           : "${EXPECTED_CERT_SHA256:?Set the ANDROID_RELEASE_CERT_SHA256 Actions secret.}"
-          clean_keystore="$(printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]')"
-          if [ -z "$clean_keystore" ]; then
-            echo "::error::ANDROID_KEYSTORE_BASE64 is empty after stripping whitespace."
-            exit 1
-          fi
-          decoded_keystore="$RUNNER_TEMP/quickshare-release.jks"
-          if ! printf '%s' "$clean_keystore" | base64 --decode > "$decoded_keystore"; then
-            rm -f "$decoded_keystore"
-            echo "::error::ANDROID_KEYSTORE_BASE64 could not be decoded. Re-encode the original release keystore as a Base64 string."
-            exit 1
-          fi
-          if [[ ! -s "$decoded_keystore" ]]; then
-            rm -f "$decoded_keystore"
-            echo "::error::ANDROID_KEYSTORE_BASE64 decoded to an empty file."
-            exit 1
-          fi
-          mv "$decoded_keystore" android/release.jks
+          bash tool/release/decode_android_keystore.sh android/release.jks
           echo "ANDROID_KEYSTORE_PATH=release.jks" >> "$GITHUB_ENV"
           echo "Configured the required Android release keystore."
       - name: Build APK
