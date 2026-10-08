@@ -2,6 +2,12 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.25] - 2026-10-08
+
+### Documentation
+- **Linux download links:** Updated GitHub repository documentation and installation guide with direct download links and commands for all published Linux packages (Universal AppImage, Debian `.deb` package, 64-bit native tarball, and portable web bundle).
+- **README cleanups:** Resolved repository documentation merge markers across features, architecture, and deployment sections.
+
 ## [2.0.24] - 2026-10-08
 
 First release since 2.0.18; it also ships the unreleased fixes from 2.0.19 to 2.0.23.

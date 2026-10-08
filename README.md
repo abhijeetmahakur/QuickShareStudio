@@ -52,7 +52,7 @@ Pre-compiled packages and installers are published on the **[Releases Page](http
 |---|---|---|
 | 🪟 **Windows 10/11** | `QuickShareStudio-Windows-Setup.exe`<br>`QuickShareStudio-Windows-x64.zip` | Native Windows installer with Start Menu/Desktop shortcuts, or portable release zip bundle. |
 | 🤖 **Android** | `QuickShareStudio-Android.apk` | Native APK with background transfer service and camera QR scanner. |
-| 🐧 **Linux** (x64) | `QuickShareStudio-Linux.tar.gz` | Portable Linux bundle with desktop launcher script. |
+| 🐧 **Linux** (x64) | `QuickShareStudio-Linux-x86_64.AppImage`<br>`QuickShareStudio-Linux-amd64.deb`<br>`QuickShareStudio-Linux-x86_64.tar.gz`<br>`QuickShareStudio-Linux.tar.gz` | Standalone AppImage (universal), Debian/Ubuntu package (`.deb`), native x64 tarball, or portable web bundle. |
 | 🍎 **macOS / iOS** | Build from source | Xcode build target for macOS and iPhone/iPad. |
 | 🌐 **Web / PWA** | Web browser / PWA | Installable Progressive Web App via Chrome, Edge, or Safari. |
 
@@ -82,13 +82,39 @@ Pre-compiled packages and installers are published on the **[Releases Page](http
 
 ### 🐧 Linux Installation
 
+#### Option 1: AppImage (Recommended — Universal for all Linux distributions)
+1. Download **`QuickShareStudio-Linux-x86_64.AppImage`** from the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest).
+2. Make it executable and launch:
 ```bash
-# 1. Download and extract the latest Linux package
+wget https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest/download/QuickShareStudio-Linux-x86_64.AppImage
+chmod +x QuickShareStudio-Linux-x86_64.AppImage
+./QuickShareStudio-Linux-x86_64.AppImage
+```
+
+#### Option 2: Debian / Ubuntu Package (`.deb`)
+1. Download **`QuickShareStudio-Linux-amd64.deb`** from the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest).
+2. Install via `dpkg` or `apt`:
+```bash
+wget https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest/download/QuickShareStudio-Linux-amd64.deb
+sudo dpkg -i QuickShareStudio-Linux-amd64.deb || sudo apt-get install -f
+quickshare
+```
+
+#### Option 3: Portable Native Tarball (x64)
+1. Download **`QuickShareStudio-Linux-x86_64.tar.gz`** from the [latest release](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest).
+2. Extract and launch the native binary:
+```bash
+wget https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest/download/QuickShareStudio-Linux-x86_64.tar.gz
+tar -xzf QuickShareStudio-Linux-x86_64.tar.gz
+cd QuickShareStudio-Linux-x86_64
+./quickshare
+```
+
+#### Option 4: Portable Web Bundle
+```bash
 wget https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest/download/QuickShareStudio-Linux.tar.gz
 tar -xzf QuickShareStudio-Linux.tar.gz
-cd QuickShareStudio-Linux
-
-# 2. Launch
+cd QuickShareStudio-Linux-Web
 ./launch.sh
 ```
 
@@ -96,32 +122,7 @@ cd QuickShareStudio-Linux
 
 ## 🔄 Auto-Updates & Releases
 
-<<<<<<< HEAD
-QuickShare Studio includes a built-in auto-update engine powered by GitHub Releases.
-
-### How Updates Work in the App
-1. **Single Source of Truth**: The application version is defined directly in [`pubspec.yaml`](pubspec.yaml) and read dynamically via `package_info_plus`.
-2. **Detection**: The app queries `https://api.github.com/repos/abhijeetmahakur/QuickShareStudio/releases/latest` on startup and every 4 hours while running.
-3. **Interactive Dialog**: If a newer version is published, an **Update available** popup shows the new tag version, release notes, and options:
-   - **Update Now**: Streams the download with a progress bar, verifies package checksums, launches the Windows installer in detached mode, and closes the app to apply the upgrade.
-   - **Update Later**: Postpones the prompt so your workflow is never interrupted.
-4. **Resilient**: Network drops and API rate limits are handled completely silently without throwing errors or interrupting offline features.
-
-### Releasing a New Version (For Developers)
-
-Releases are built, packaged, and published automatically via GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
-
-```bash
-# 1. Bump version in pubspec.yaml (e.g., version: 2.0.2+202) and update CHANGELOG.md
-# 2. Commit the changes
-git add pubspec.yaml CHANGELOG.md
-git commit -m "Release v2.0.2"
-
-# 3. Tag and push
-git tag v2.0.2
-git push origin main --tags
-=======
-QuickShare Studio includes a built-in update check powered by GitHub Releases. Web/PWA builds are served from [GitHub Pages](https://abhijeetmahakur.github.io/QuickShareStudio/) and prompt **“Update available, reload”** when a new service worker is ready. Native Windows builds can download and launch the checksum-verified setup installer. Android checks for an APK and links to its release; Android still requires the APK to have the same signing key as the installed version.
+QuickShare Studio includes a built-in update check powered by GitHub Releases. Web/PWA builds are served from [GitHub Pages](https://abhijeetmahakur.github.io/QuickShareStudio/) and prompt **“Update available, reload”** when a new service worker is ready. Native Windows builds can download and launch the checksum-verified setup installer. Android checks for an APK and links to its release; Android still requires the APK to have the same signing key as the installed version. Linux native builds check for updates and download the verified AppImage.
 
 **Android signing:** every release APK must be signed with the same permanent keystore. Configure these GitHub Actions secrets: `ANDROID_KEYSTORE_BASE64` (base64 of the permanent `.jks`/`.keystore` file), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `ANDROID_RELEASE_CERT_SHA256` (the SHA-256 certificate fingerprint printed by `apksigner verify --print-certs`). Use the key that signed v2.0.16 if it is available, and pin that APK's certificate fingerprint. CI refuses to build without the signing key and refuses to publish an APK whose certificate differs from the pinned fingerprint. Never commit the keystore or passwords. If the original signing key is lost, Android cannot update v2.0.16 installations in place; users must back up app-only data, uninstall once, and install the new release. Future releases signed with the permanent key can then update normally.
 
@@ -141,19 +142,17 @@ Releases are built, packaged, and published automatically via GitHub Actions ([`
 # 1. Bump version in pubspec.yaml and update CHANGELOG.md
 # 2. Commit the changes
 git add pubspec.yaml CHANGELOG.md
-git commit -m "Release v2.0.3"
+git commit -m "Release v..."
 
 # 3. Tag and push
-git tag v2.0.3
 git push origin main
-git push origin v2.0.3
->>>>>>> origin/main
 ```
 
 The GitHub Actions CI/CD pipeline runs on `windows-latest` and `ubuntu-latest`:
 - Compiles the native Windows release (`flutter build windows --release`).
 - Packages `QuickShareStudio-Windows-x64.zip`.
 - Builds the Inno Setup installer (`QuickShareStudio-Windows-Setup.exe`).
+- Builds Linux AppImage, Debian package (`.deb`), native tarball, and web tarball.
 - Builds `QuickShareStudio-Android.apk`.
 - Generates `latest.json` and `SHA256SUMS.txt`.
 - Attaches all assets to the new GitHub Release tag.
@@ -162,39 +161,24 @@ The GitHub Actions CI/CD pipeline runs on `windows-latest` and `ubuntu-latest`:
 
 ## 🔗 Connecting Devices
 
-<<<<<<< HEAD
-On the receiving device, open **Device Pairing** to view a 6-digit code and QR code (valid for 5 minutes). On the sending device, open **Device Pairing → Connect to another device**, scan the QR code or type the pin, and tap **Pair / Connect**:
-
-1. **Local Wi-Fi:** QuickShare discovers devices on your local subnet first via UDP beacon and WebSocket handshake.
-2. **Internet:** If devices are on different networks (mobile data vs home broadband), the connection seamlessly falls back to WebRTC data channels with STUN/TURN relays.
-=======
 Create a room from **Device Pairing** to show its 6-digit code and QR (valid for 5 minutes). Other devices can join the same room by scanning or entering the code; multiple members can connect while the room is active. Files are sent directly device-to-device over WebRTC when possible. No API key or file storage server is used. A public STUN server helps peers discover routes, but some firewalls and carrier networks can still prevent a direct connection; use local Wi-Fi or Bluetooth when available.
 
 1. **Local Wi-Fi:** QuickShare discovers devices on your local subnet first via UDP beacon and WebSocket handshake.
 2. **Internet:** Peers on different networks attempt a direct WebRTC data channel using public STUN servers. A restrictive firewall or NAT may prevent a direct route; there is no bundled TURN relay.
->>>>>>> origin/main
 3. **Bluetooth:** When offline without any shared network, devices pair over Bluetooth Low Energy (BLE) and transfer data over Wi-Fi Direct.
 
 ---
 
 ## 🛠 Build from Source
-<<<<<<< HEAD
 
 ### Prerequisites
 - [Flutter SDK 3.47+](https://docs.flutter.dev/get-started/install) (Dart 3.13+)
 - Git
 - For Windows native build: Visual Studio 2022 with C++ desktop workload
 - For Android: Android SDK (Platform 34+, NDK 28)
-=======
->>>>>>> origin/main
+- For Linux native build: `clang`, `cmake`, `ninja-build`, `pkg-config`, `libgtk-3-dev`, `libblkid-dev`, `liblzma-dev`, `libpulse-dev`, `libasound2-dev`
 
-### Prerequisites
-- [Flutter SDK 3.47+](https://docs.flutter.dev/get-started/install) (Dart 3.13+)
-- Git
-- For Windows native build: Visual Studio 2022 with C++ desktop workload
-- For Android: Android SDK (Platform 34+, NDK 28)
-
-<<<<<<< HEAD
+### Android Permissions
 | Permission | Android version | Why |
 |---|---|---|
 | `BLUETOOTH_SCAN` (*neverForLocation*), `BLUETOOTH_CONNECT`, `BLUETOOTH_ADVERTISE` | 12+ (API 31+) | Find nearby phones and exchange keys over Bluetooth |
@@ -216,18 +200,6 @@ Create a room from **Device Pairing** to show its 6-digit code and QR (valid for
 | The verification codes differ | Disconnect and connect again. |
 | A transfer stopped with "Connection lost" | The sender taps **Resume** to continue where it stopped, or **Retry** to start over. |
 
----
-
-## 🛠 Build from Source
-
-### Prerequisites
-- [Flutter SDK 3.47+](https://docs.flutter.dev/get-started/install) (Dart 3.13+)
-- Git
-- For Windows native build: Visual Studio 2022 with C++ desktop workload
-- For Android: Android SDK (Platform 34+, NDK 28)
-
-=======
->>>>>>> origin/main
 ### Building Locally
 
 ```bash
@@ -240,6 +212,9 @@ flutter pub get
 
 # Build native Windows desktop release
 flutter build windows --release
+
+# Build native Linux desktop release
+flutter build linux --release
 
 # Build Android APK
 flutter build apk --release
@@ -267,21 +242,6 @@ taskkill /f /im explorer.exe
 Remove-Item "$env:LOCALAPPDATA\IconCache.db" -Force -ErrorAction SilentlyContinue
 Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\iconcache*" -Force -ErrorAction SilentlyContinue
 start explorer.exe
-<<<<<<< HEAD
-```
-
----
-
-## 🚀 Publishing a Release
-
-Releases are built automatically by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Push a version tag and the Windows and Android packages are attached to a new GitHub Release:
-
-```bash
-git tag v2.0.2
-git push origin v2.0.2
-```
-=======
->>>>>>> origin/main
 ```
 
 ---
@@ -294,11 +254,7 @@ flowchart TB
   CM["ConnectionManager<br/>LAN → WebRTC (Internet) → Bluetooth Fallback"]
   PS["Transfer Protocol v2<br/>Handshake · Frame Sequencing · SHA-256 Checksums · Resumption"]
   LAN["Local LAN Socket<br/>UDP Discovery + Encrypted WebSocket"]
-<<<<<<< HEAD
-  NET["WebRTC DataChannel<br/>DTLS / SCTP + STUN/TURN Relay"]
-=======
   NET["WebRTC DataChannel<br/>DTLS / SCTP + public STUN"]
->>>>>>> origin/main
   BT["Bluetooth / Wi-Fi Direct<br/>BLE GATT Handshake + Direct Socket"]
   SEC["End-to-End Encryption<br/>X25519 Key Exchange + AES-256-GCM"]
   UPD["Auto-Update Engine<br/>GitHub Releases API · PackageInfo · Detached Installer Exec"]
@@ -316,11 +272,7 @@ flowchart TB
 | **UI & Styling** | Flutter Material 3, custom Glassmorphism tokens, and responsive multi-window layouts. |
 | **State Management** | `provider` (`TransferEngine`, `ConnectionManager`, `AppUpdateService`, `ThemeService`). |
 | **Transfer Protocol** | `lib/transfer/protocol/`: streaming byte framing, incremental SHA-256 verification, and automatic transfer resumption. |
-<<<<<<< HEAD
-| **Networking** | LAN (`shelf`, WebSockets), Internet (`flutter_webrtc`, PeerJS signaling, TURN relays), Bluetooth (`BluetoothBridge`). |
-=======
 | **Networking** | LAN (`shelf`, WebSockets), Internet (`flutter_webrtc`, PeerJS signaling, public STUN), Bluetooth (`BluetoothBridge`). |
->>>>>>> origin/main
 | **Cryptography** | `cryptography` (X25519 ECDH, HKDF, AES-256-GCM authenticated encryption). |
 | **Native Windows Runner** | C++ Win32 runner with `WNDCLASSEX`, `WM_SETICON`, and Visual Studio `Runner.rc` resource embedding. |
 | **PDF Engine** | `pdf`, `printing`, PDF.js, and client-side OCR extraction. |
