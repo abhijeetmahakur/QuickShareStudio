@@ -16,6 +16,9 @@
 
 </div>
 
+> **Latest Stable Release:** [**QuickShare Studio v2.0.18**](https://github.com/abhijeetmahakur/QuickShareStudio/releases/tag/v2.0.18) (Published: October 6, 2026)  
+> **Current Development Version:** `2.0.31` (Branch: [`main`](https://github.com/abhijeetmahakur/QuickShareStudio/tree/main))
+
 ---
 
 ## 📖 Overview
@@ -46,15 +49,25 @@
 
 ## 📥 Download & Install
 
-Pre-compiled packages and installers are published on the **[Releases Page](https://github.com/abhijeetmahakur/QuickShareStudio/releases/latest)**.
+Pre-compiled and verified packages are published on the **[GitHub Releases Page](https://github.com/abhijeetmahakur/QuickShareStudio/releases/tag/v2.0.18)**.
 
-| Platform | Package | Description |
-|---|---|---|
-| 🪟 **Windows 10/11** | `QuickShareStudio-Windows-Setup.exe`<br>`QuickShareStudio-Windows-x64.zip` | Native Windows installer with Start Menu/Desktop shortcuts, or portable release zip bundle. |
-| 🤖 **Android** | `QuickShareStudio-Android.apk` | Native APK with background transfer service and camera QR scanner. |
-| 🐧 **Linux** (x64) | `QuickShareStudio-Linux-x86_64.AppImage`<br>`QuickShareStudio-Linux-amd64.deb`<br>`QuickShareStudio-Linux-x86_64.tar.gz`<br>`QuickShareStudio-Linux.tar.gz` | Standalone AppImage (universal), Debian/Ubuntu package (`.deb`), native x64 tarball, or portable web bundle. |
-| 🍎 **macOS / iOS** | Build from source | Xcode build target for macOS and iPhone/iPad. |
-| 🌐 **Web / PWA** | Web browser / PWA | Installable Progressive Web App via Chrome, Edge, or Safari. |
+### Verified Stable Downloads (v2.0.18)
+
+| Platform | Package | Direct Download Link | Size | SHA-256 Checksum |
+|---|---|---|---|---|
+| 🪟 **Windows 10/11** | Installer | [**`QuickShareStudio-Windows-Setup.exe`**](https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/v2.0.18/QuickShareStudio-Windows-Setup.exe) | 19.4 MB | `e479f3989bb0cf1411257add17d733619e5ec8f70056c7d17aec917a2c8c7c71` |
+| 🪟 **Windows 10/11** | Portable Zip | [**`QuickShareStudio-Windows-x64.zip`**](https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/v2.0.18/QuickShareStudio-Windows-x64.zip) | 25.5 MB | `3db610e768ea3684215ac8874992ca31c36806bade31fcc7b47ac1037f5434cc` |
+| 🐧 **Linux (x86_64)** | AppImage | [**`QuickShareStudio-Linux-x86_64.AppImage`**](https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/v2.0.18/QuickShareStudio-Linux-x86_64.AppImage) | 22.6 MB | `d3de1a522364e7f338a08b843fe44a0e883430a7731890ab5b310f563cc51232` |
+| 🐧 **Linux** | Web Bundle | [**`QuickShareStudio-Linux.tar.gz`**](https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/v2.0.18/QuickShareStudio-Linux.tar.gz) | 25.1 MB | `bc0c37709890b64b726f678dc189cdcf5d8dd2241bf2def8e7ef71490ff63ab4` |
+| 🤖 **Android** | Release APK | [**`QuickShareStudio-Android.apk`**](https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/v2.0.18/QuickShareStudio-Android.apk) | 115.4 MB | `524e186d8f80c5dad18e37f84989d2e7f3483439db44c5316acb811f13b16682` |
+| 🌐 **Web / PWA** | Web App | [**Launch Live PWA**](https://abhijeetmahakur.github.io/QuickShareStudio/) | Hosted | Installable via browser |
+
+*Note: Native Debian packages (`.deb`) and native standalone Linux bundles (`QuickShareStudio-Linux-x86_64.tar.gz`) are built in the pipeline and will be included in GitHub Releases starting with `v2.0.30`.*
+
+#### Verifying Checksums
+- **Windows (PowerShell):** `CertUtil -hashfile <filename> SHA256`
+- **Linux / macOS:** `sha256sum <filename>`
+- **Official Checksum Manifest:** [**`SHA256SUMS.txt`**](https://github.com/abhijeetmahakur/QuickShareStudio/releases/download/v2.0.18/SHA256SUMS.txt)
 
 ---
 

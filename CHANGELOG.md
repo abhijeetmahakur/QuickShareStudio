@@ -2,6 +2,11 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.31] - 2026-10-14
+
+### Documentation
+- **Verified Download Links & Checksums:** Updated README with verified direct download links, file sizes, and SHA-256 hashes for all published artifacts, and added clear version badges distinguishing published releases from the active development tree.
+
 ## [2.0.30] - 2026-10-14
 
 ### Added
