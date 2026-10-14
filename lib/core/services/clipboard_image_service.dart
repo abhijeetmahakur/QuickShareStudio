@@ -2,14 +2,28 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../../data/models/screenshot_item.dart';
+import 'platform_clipboard_service.dart';
 import 'web_interop_stub.dart' if (dart.library.js_interop) 'web_interop_web.dart';
 
 class ClipboardImageService {
   /// Attempts to read an image from the clipboard.
-  /// 1. Checks browser paste event buffer captured in JS (for Flutter Web).
-  /// 2. Checks text clipboard for data URL / base64 image strings.
+  ///
+  /// Priority order:
+  /// 1. Native image clipboard via [PlatformClipboardService] (Windows/Linux/macOS)
+  /// 2. Browser paste event buffer captured in JS (Flutter Web)
+  /// 3. Text clipboard for data URL / base64 image strings
   static Future<ScreenshotItem?> readPastedImage() async {
-    // 1. Check async web clipboard (supports both toolbar button click and native paste)
+    // 1. Try native image clipboard via PlatformClipboardService (desktop & mobile)
+    if (!kIsWeb) {
+      try {
+        final item = await PlatformClipboardService.instance.readImageAsScreenshotItem();
+        if (item != null) return item;
+      } catch (e) {
+        debugPrint('[ClipboardImageService] Native image read failed: $e');
+      }
+    }
+
+    // 2. Check async web clipboard (supports both toolbar button click and native paste)
     try {
       final webB64 = await readWebClipboardImageAsync();
       if (webB64 != null && webB64.isNotEmpty) {
@@ -17,17 +31,14 @@ class ClipboardImageService {
         if (bytes != null && bytes.isNotEmpty) {
           final now = DateTime.now();
           final name = 'Pasted_Screenshot_${now.millisecondsSinceEpoch.toString().substring(7)}.png';
-          return await ScreenshotItem.create(
-            name: name,
-            bytes: bytes,
-          );
+          return await ScreenshotItem.create(name: name, bytes: bytes);
         }
       }
     } catch (e) {
       debugPrint('Error reading async web clipboard image: $e');
     }
 
-    // 2. Check standard text clipboard for base64 or data URLs
+    // 3. Check standard text clipboard for base64 or data URLs
     try {
       final clipData = await Clipboard.getData(Clipboard.kTextPlain);
       final text = clipData?.text?.trim();
@@ -37,10 +48,7 @@ class ClipboardImageService {
           if (bytes != null && bytes.isNotEmpty) {
             final now = DateTime.now();
             final name = 'Pasted_Image_${now.millisecondsSinceEpoch.toString().substring(7)}.png';
-            return await ScreenshotItem.create(
-              name: name,
-              bytes: bytes,
-            );
+            return await ScreenshotItem.create(name: name, bytes: bytes);
           }
         }
       }
@@ -49,6 +57,33 @@ class ClipboardImageService {
     }
 
     return null;
+  }
+
+  /// Write image bytes to the system clipboard as actual image data.
+  ///
+  /// Writes PNG/JPEG pixel data — NOT a text path or filename — so the
+  /// recipient app receives an image it can paste into an image editor or
+  /// messaging application.
+  static Future<bool> writeImageToClipboard(Uint8List bytes, {String mime = 'image/png'}) async {
+    if (!kIsWeb) {
+      try {
+        final result = await PlatformClipboardService.instance.writeImageBytes(bytes, mime: mime);
+        return result.success;
+      } catch (e) {
+        debugPrint('[ClipboardImageService] Native image write failed: $e');
+        return false;
+      }
+    }
+    // Web: encode as data URL and copy to text clipboard as fallback
+    try {
+      final b64 = base64Encode(bytes);
+      final dataUrl = 'data:$mime;base64,$b64';
+      await Clipboard.setData(ClipboardData(text: dataUrl));
+      return true;
+    } catch (e) {
+      debugPrint('[ClipboardImageService] Web image write failed: $e');
+      return false;
+    }
   }
 
   /// Web only: receives each native browser paste outside text fields
@@ -93,10 +128,7 @@ class ClipboardImageService {
         if (dataStr != null) {
           final bytes = _decodeBase64(dataStr);
           if (bytes != null && bytes.isNotEmpty) {
-            final screenshot = await ScreenshotItem.create(
-              name: name,
-              bytes: bytes,
-            );
+            final screenshot = await ScreenshotItem.create(name: name, bytes: bytes);
             result.add(screenshot);
           }
         }

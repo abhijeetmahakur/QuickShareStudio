@@ -2,6 +2,13 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.26] - 2026-10-14
+
+### Added
+- **Universal Clipboard:** Added modular cross-platform clipboard support across Windows, Linux (X11 & Wayland), macOS, Android, and Web with dedicated tabs for text, actual image pixel data, files, and local history.
+- **Linux Clipboard Integration:** Integrated native display server detection (X11 and Wayland via wl-paste/wl-copy and xclip fallback) with proper MIME-type negotiation for PNG images and file URIs.
+- **Clipboard File & Image Sharing:** Enabled direct copying and device-to-device streaming transfer of clipboard contents, files, and images with SHA-256 integrity verification.
+
 ## [2.0.25] - 2026-10-08
 
 ### Documentation
