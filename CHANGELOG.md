@@ -2,6 +2,11 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.29] - 2026-10-14
+
+### Fixed
+- **Android Release Keystore Helper:** Made keytool discovery cross-environment compatible and hardened PowerShell error handling to cleanly output Base64 secrets and SHA-256 fingerprints.
+
 ## [2.0.28] - 2026-10-14
 
 ### Added
