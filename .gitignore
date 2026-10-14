@@ -85,6 +85,8 @@ __pycache__/
 *.jks
 *.keystore
 /android/key.properties
+/android/keystore_base64.txt
+/android/*.secret
 
 # E2E harness dependencies
 /tool/e2e/node_modules/

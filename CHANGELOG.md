@@ -2,6 +2,12 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.30] - 2026-10-14
+
+### Added
+- **Automated Android Keystore Generation:** Enhanced `tool/release/setup_android_signing.ps1` with non-interactive generation (`-CreateNew`), verified local JKS keystore generation, and safe local base64 caching.
+- **Security Hardening:** Updated `.gitignore` to prevent any inadvertent commitment of keystore text or secret files.
+
 ## [2.0.29] - 2026-10-14
 
 ### Fixed

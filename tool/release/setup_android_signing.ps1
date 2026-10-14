@@ -10,7 +10,10 @@ param(
     [string]$StorePassword,
 
     [Parameter(Mandatory=$false)]
-    [string]$KeyPassword
+    [string]$KeyPassword,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$CreateNew
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,18 +47,25 @@ if (-not $KeystorePath -or -not (Test-Path $KeystorePath)) {
         Write-Warning "Keystore file not found at: $KeystorePath"
     }
 
-    $defaultPath = Join-Path $PWD 'android\release.jks'
-    Write-Host 'No valid keystore path supplied.'
-    $choice = Read-Host "Create a new permanent release keystore at '$defaultPath'? (Y/N)"
-    if ($choice -match '^[Yy]') {
+    $defaultPath = if ($KeystorePath) { $KeystorePath } else { Join-Path $PWD 'android\release.jks' }
+    $shouldCreate = $CreateNew.IsPresent
+    if (-not $shouldCreate) {
+        Write-Host 'No valid keystore path supplied.'
+        $choice = Read-Host "Create a new permanent release keystore at '$defaultPath'? (Y/N)"
+        if ($choice -match '^[Yy]') { $shouldCreate = $true }
+    }
+
+    if ($shouldCreate) {
         if (-not $StorePassword) {
             $StorePassword = Read-Host 'Enter keystore password (at least 6 characters)'
         }
         if (-not $KeyPassword) {
             $KeyPassword = $StorePassword
         }
-        $KeyAlias = Read-Host 'Enter key alias [default: quickshare]'
-        if (-not $KeyAlias) { $KeyAlias = 'quickshare' }
+        if (-not $KeyAlias) {
+            $KeyAlias = Read-Host 'Enter key alias [default: quickshare]'
+            if (-not $KeyAlias) { $KeyAlias = 'quickshare' }
+        }
 
         $dname = 'CN=QuickShare Studio, OU=Release, O=QuickShare, L=City, ST=State, C=US'
         Write-Host 'Generating release keystore using keytool...' -ForegroundColor Yellow
