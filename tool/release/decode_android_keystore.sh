@@ -20,7 +20,7 @@ fail() {
 # Accept the encodings Windows and macOS tools produce: line-wrapped output,
 # certutil -encode output with its -----BEGIN/END----- lines, surrounding
 # quotes, URL-safe Base64 and missing padding.
-encoded="$(printf '%s\n' "$KEYSTORE_BASE64" | tr -d '\r' | sed '/^[[:space:]]*-----/d' | tr -d '[:space:]"'"'" | tr -- '-_' '+/' | sed 's/=*$//')"
+encoded="$(printf '%s\n' "$KEYSTORE_BASE64" | tr -d '\r' | sed '/^[[:space:]]*-----/d' | sed '/[Cc]ert[Uu]til/d' | tr -d '[:space:]"'"'" | tr -- '-_' '+/' | sed 's/=*$//')"
 if [[ -z "$encoded" ]]; then
   fail "ANDROID_KEYSTORE_BASE64 is empty once whitespace and BEGIN/END lines are removed."
 fi

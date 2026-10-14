@@ -2,6 +2,11 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.27] - 2026-10-14
+
+### Fixed
+- **Android Release Keystore Decoding:** Filter out Windows certutil status output lines (`CertUtil: -encode command completed successfully.`) during secret decoding, resolving the non-Base64 character parsing failure.
+
 ## [2.0.26] - 2026-10-14
 
 ### Added
