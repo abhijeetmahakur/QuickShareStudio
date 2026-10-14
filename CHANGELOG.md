@@ -2,6 +2,11 @@
 
 All notable changes to QuickShare Studio. Versions follow [semantic versioning](https://semver.org).
 
+## [2.0.28] - 2026-10-14
+
+### Added
+- **Android Signing Setup Tool:** Added `tool/release/setup_android_signing.ps1` to inspect or generate permanent release keystores, verify alias and passwords, compute pinned SHA-256 fingerprints, and copy clean Base64 to clipboard for GitHub Actions release workflow.
+
 ## [2.0.27] - 2026-10-14
 
 ### Fixed
